@@ -1,0 +1,6 @@
+prep_cli_path: C:\Program Files\Tableau\Tableau Prep Builder 2026.1\scripts\tableau-prep-cli.bat
+database_url: sqlite:///data/orquestador.db
+log_dir: logs
+timezone: America/Argentina/Buenos_Aires
+timeout_segundos: 3600
+ttl_grupo_horas: 2

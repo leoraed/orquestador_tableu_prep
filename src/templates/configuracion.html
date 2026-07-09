@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h5 class="mb-4 fw-bold">Configuración</h5>
+
+<div class="card" style="max-width: 640px">
+  <div class="card-header py-2">Parámetros generales</div>
+  <div class="card-body">
+    <form action="/api/configuracion" method="post">
+
+      <div class="mb-3">
+        <label class="form-label fw-semibold">Path al CLI de Tableau Prep</label>
+        <input type="text" name="prep_cli_path" class="form-control font-monospace"
+          value="{{ settings.prep_cli_path }}" required>
+        <div class="form-text">
+          Ruta completa al archivo <code>tableau-prep-conductor.bat</code> (Windows) o binario equivalente.
+        </div>
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label fw-semibold">Timezone</label>
+        <input type="text" name="timezone" class="form-control"
+          value="{{ settings.timezone }}" required placeholder="America/Argentina/Buenos_Aires">
+        <div class="form-text">
+          Formato pytz, ej: <code>America/Argentina/Buenos_Aires</code>, <code>UTC</code>.
+          Requiere reinicio del servidor para aplicarse.
+        </div>
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label fw-semibold">Timeout por flow (segundos)</label>
+        <input type="number" name="timeout_segundos" class="form-control"
+          value="{{ settings.timeout_segundos }}" min="60" required>
+        <div class="form-text">Si un flow supera este tiempo, se marca como fallido. Por defecto: 3600 (1 hora).</div>
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label fw-semibold">TTL de grupo (horas)</label>
+        <input type="number" name="ttl_grupo_horas" class="form-control"
+          value="{{ settings.ttl_grupo_horas | default(2) }}" min="0.25" step="0.25" required>
+        <div class="form-text">
+          Si los flows de una cadena no completan en este tiempo, el grupo expira y la próxima
+          ejecución del scheduler arranca desde cero.
+        </div>
+      </div>
+
+      <div class="mb-4">
+        <label class="form-label fw-semibold">URL de base de datos</label>
+        <input type="text" name="database_url" class="form-control font-monospace"
+          value="{{ settings.database_url }}" required>
+        <div class="form-text">
+          SQLite: <code>sqlite:///data/orquestador.db</code>. Requiere reinicio para aplicarse.
+        </div>
+      </div>
+
+      <div class="alert alert-warning py-2 small mb-3">
+        <i class="bi bi-info-circle me-1"></i>
+        Los cambios de <strong>timezone</strong> y <strong>URL de base de datos</strong> requieren reiniciar el servidor para aplicarse.
+        El <strong>path al CLI</strong> y el <strong>timeout</strong> se aplican en la próxima ejecución.
+      </div>
+
+      <button type="submit" class="btn btn-primary">
+        <i class="bi bi-floppy me-1"></i>Guardar cambios
+      </button>
+    </form>
+  </div>
+</div>
+
+{% endblock %}

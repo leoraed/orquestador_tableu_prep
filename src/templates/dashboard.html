@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h5 class="mb-0 fw-bold">Dashboard</h5>
+  <span class="text-muted small" id="reloj"></span>
+</div>
+
+<!-- Stats -->
+<div class="row g-3 mb-4">
+  <div class="col-sm-4">
+    <div class="stat-card" style="background: linear-gradient(135deg,#0f3460,#16213e)">
+      <div class="small opacity-75 mb-1"><i class="bi bi-play-circle me-1"></i>Flows configurados</div>
+      <div class="fs-2 fw-bold">{{ flows | length }}</div>
+      <div class="small opacity-60">{{ flows | selectattr("enabled") | list | length }} activos</div>
+    </div>
+  </div>
+  <div class="col-sm-4">
+    <div class="stat-card" style="background: linear-gradient(135deg,#1a6634,#198754)">
+      <div class="small opacity-75 mb-1"><i class="bi bi-check-circle me-1"></i>Ejecuciones hoy</div>
+      <div class="fs-2 fw-bold">{{ ejecuciones_hoy }}</div>
+      <div class="small opacity-60">{{ exitosas_hoy }} exitosas</div>
+    </div>
+  </div>
+  <div class="col-sm-4">
+    <div class="stat-card" style="background: linear-gradient(135deg,#6f42c1,#9c68e0)">
+      <div class="small opacity-75 mb-1"><i class="bi bi-alarm me-1"></i>Próximos disparos</div>
+      <div class="fs-2 fw-bold">{{ jobs | length }}</div>
+      <div class="small opacity-60">jobs en scheduler</div>
+    </div>
+  </div>
+</div>
+
+<!-- Próximos disparos -->
+{% if jobs %}
+<div class="card mb-4">
+  <div class="card-header py-2">Próximos disparos</div>
+  <div class="card-body p-0">
+    <table class="table mb-0">
+      <thead><tr><th>Flow</th><th>Próxima ejecución</th><th></th></tr></thead>
+      <tbody>
+        {% for flow in flows %}
+          {% if flow.name in jobs %}
+          <tr>
+            <td><i class="bi bi-play-circle-fill text-primary me-1"></i>{{ flow.name }}</td>
+            <td class="text-muted">{{ jobs[flow.name] }}</td>
+            <td>
+              <form action="/api/flows/{{ flow.name }}/ejecutar" method="post" class="d-inline">
+                <button class="btn btn-sm btn-outline-primary py-0">
+                  <i class="bi bi-lightning-charge"></i> Ejecutar ahora
+                </button>
+              </form>
+            </td>
+          </tr>
+          {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<!-- Últimas ejecuciones -->
+<div class="card">
+  <div class="card-header py-2 d-flex justify-content-between align-items-center">
+    <span>Últimas ejecuciones</span>
+    <a href="/historial" class="btn btn-sm btn-outline-secondary py-0">Ver todo</a>
+  </div>
+  <div class="card-body p-0">
+    {% if ejecuciones %}
+    <table class="table mb-0">
+      <thead>
+        <tr>
+          <th>Flow</th>
+          <th>Inicio</th>
+          <th>Duración</th>
+          <th>Estado</th>
+          <th>Disparador</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in ejecuciones %}
+        <tr>
+          <td>{{ e.nombre_flow }}</td>
+          <td class="text-muted">{{ e.inicio.strftime('%d/%m %H:%M:%S') }}</td>
+          <td>{{ duracion(e.inicio, e.fin) }}</td>
+          <td>
+            <span class="badge badge-{{ e.estado }} rounded-pill">{{ e.estado }}</span>
+          </td>
+          <td>
+            {% if e.disparador == 'manual' %}
+              <span class="badge bg-info rounded-pill">manual</span>
+            {% else %}
+              <span class="badge bg-secondary rounded-pill">scheduler</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="text-center text-muted py-5">
+      <i class="bi bi-inbox fs-2 d-block mb-2"></i>
+      No hay ejecuciones todavía.
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+  function actualizarReloj() {
+    document.getElementById('reloj').textContent = new Date().toLocaleString('es-AR');
+  }
+  actualizarReloj();
+  setInterval(actualizarReloj, 1000);
+</script>
+{% endblock %}

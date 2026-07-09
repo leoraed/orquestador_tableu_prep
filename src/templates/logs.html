@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h5 class="mb-0 fw-bold">Log del servidor</h5>
+  <div class="d-flex gap-2 align-items-center">
+    <form method="get" action="/logs" class="d-flex gap-2 align-items-center">
+      <select name="lineas" class="form-select form-select-sm" style="width:120px" onchange="this.form.submit()">
+        <option value="100"  {% if lineas_n == 100  %}selected{% endif %}>100 líneas</option>
+        <option value="200"  {% if lineas_n == 200  %}selected{% endif %}>200 líneas</option>
+        <option value="500"  {% if lineas_n == 500  %}selected{% endif %}>500 líneas</option>
+        <option value="1000" {% if lineas_n == 1000 %}selected{% endif %}>1000 líneas</option>
+      </select>
+    </form>
+    <button class="btn btn-sm btn-outline-secondary" onclick="location.reload()">
+      <i class="bi bi-arrow-clockwise me-1"></i>Actualizar
+    </button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <pre id="logbox" style="
+      background:#0d1117;
+      color:#c9d1d9;
+      margin:0;
+      padding:1rem;
+      font-size:.78rem;
+      line-height:1.6;
+      max-height:75vh;
+      overflow-y:auto;
+      border-radius:10px;
+    ">{% if lineas %}{% for linea in lineas %}<span class="log-line {% if '[ERROR]' in linea %}log-error{% elif '[WARNING]' in linea %}log-warn{% elif '[INFO]' in linea %}log-info{% endif %}">{{ linea | e }}</span>{% endfor %}{% else %}<span class="text-muted">Sin entradas en el log todavía.</span>{% endif %}</pre>
+  </div>
+</div>
+
+<style>
+  .log-error { color: #ff7b7b; }
+  .log-warn  { color: #ffc107; }
+  .log-info  { color: #c9d1d9; }
+</style>
+
+{% endblock %}
+{% block scripts %}
+<script>
+  // Scroll al final al cargar
+  const box = document.getElementById('logbox');
+  box.scrollTop = box.scrollHeight;
+
+  // Auto-refresh cada 10 segundos
+  setTimeout(() => location.reload(), 10000);
+</script>
+{% endblock %}

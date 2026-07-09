@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h5 class="mb-0 fw-bold">Historial de ejecuciones</h5>
+  <form class="d-flex gap-2 align-items-center" method="get" action="/historial">
+    <select name="flow" class="form-select form-select-sm" style="width: 200px" onchange="this.form.submit()">
+      <option value="">Todos los flows</option>
+      {% for f in flows %}
+      <option value="{{ f.name }}" {% if filtro_flow == f.name %}selected{% endif %}>{{ f.name }}</option>
+      {% endfor %}
+    </select>
+    {% if filtro_flow %}
+    <a href="/historial" class="btn btn-sm btn-outline-secondary">
+      <i class="bi bi-x"></i> Limpiar
+    </a>
+    {% endif %}
+  </form>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    {% if ejecuciones %}
+    <table class="table mb-0">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Flow</th>
+          <th>Inicio</th>
+          <th>Duración</th>
+          <th>Estado</th>
+          <th>Disparador</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in ejecuciones %}
+        <tr>
+          <td class="text-muted small">{{ e.id }}</td>
+          <td class="fw-semibold">{{ e.nombre_flow }}</td>
+          <td class="text-muted small">{{ e.inicio.strftime('%d/%m/%Y %H:%M:%S') }}</td>
+          <td>{{ duracion(e.inicio, e.fin) }}</td>
+          <td>
+            <span class="badge badge-{{ e.estado }} rounded-pill">{{ e.estado }}</span>
+          </td>
+          <td>
+            {% if e.disparador == 'manual' %}
+              <span class="badge bg-info rounded-pill">manual</span>
+            {% else %}
+              <span class="badge bg-secondary rounded-pill">scheduler</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if e.salida or e.error %}
+            <button class="btn btn-sm btn-outline-secondary py-0"
+              onclick="verDetalle({{ e.id }}, {{ e.salida | tojson }}, {{ e.error | tojson }})">
+              <i class="bi bi-terminal"></i>
+            </button>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="text-center text-muted py-5">
+      <i class="bi bi-inbox fs-2 d-block mb-2"></i>
+      No hay ejecuciones{% if filtro_flow %} para <strong>{{ filtro_flow }}</strong>{% endif %}.
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Modal detalle -->
+<div class="modal fade" id="modalDetalle" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title fw-bold" id="modalDetalleTitle">Detalle #</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div id="seccionSalida" class="mb-3" style="display:none">
+          <div class="fw-semibold text-success mb-1"><i class="bi bi-terminal me-1"></i>Salida</div>
+          <pre id="textSalida" class="bg-dark text-light p-3 rounded" style="max-height:300px;overflow:auto;font-size:.8rem"></pre>
+        </div>
+        <div id="seccionError" style="display:none">
+          <div class="fw-semibold text-danger mb-1"><i class="bi bi-exclamation-triangle me-1"></i>Error</div>
+          <pre id="textError" class="bg-dark text-danger p-3 rounded" style="max-height:300px;overflow:auto;font-size:.8rem"></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+function verDetalle(id, salida, error) {
+  document.getElementById('modalDetalleTitle').textContent = `Detalle #${id}`;
+
+  const secSalida = document.getElementById('seccionSalida');
+  const secError  = document.getElementById('seccionError');
+
+  if (salida) {
+    document.getElementById('textSalida').textContent = salida;
+    secSalida.style.display = 'block';
+  } else {
+    secSalida.style.display = 'none';
+  }
+
+  if (error) {
+    document.getElementById('textError').textContent = error;
+    secError.style.display = 'block';
+  } else {
+    secError.style.display = 'none';
+  }
+
+  new bootstrap.Modal(document.getElementById('modalDetalle')).show();
+}
+</script>
+{% endblock %}

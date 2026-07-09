@@ -1,0 +1,19 @@
+# Entorno virtual
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Base de datos
+*.db
+*.sqlite3
+
+# Logs
+logs/
+
+# Config con datos sensibles (cada server tiene el suyo)
+config/settings.yaml
+config/flows.yaml
+
+# Variables de entorno
+.env

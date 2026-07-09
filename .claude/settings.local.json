@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pip install -r requirements.txt)",
+      "Bash(python -m pip install \"uvicorn>=0.31.1\")",
+      "Bash(curl -s http://localhost:8000/health)",
+      "Bash(python main.py)"
+    ]
+  }
+}
