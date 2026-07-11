@@ -10,13 +10,15 @@ logger = logging.getLogger(__name__)
 scheduler = BackgroundScheduler(timezone=settings["timezone"])
 
 
-def _disparar_scheduled(nombre: str, archivo: str, credenciales=None) -> None:
+def _disparar_scheduled(nombre: str, archivo: str, credenciales=None, reintentos: int = 0, reintento_espera_min: int = 5) -> None:
     ejecutar_flow(
         nombre=nombre,
         archivo=archivo,
         credenciales=credenciales,
         disparador="scheduler",
         grupo_id=str(uuid.uuid4()),
+        reintentos=reintentos,
+        reintento_espera_min=reintento_espera_min,
     )
 
 
@@ -48,6 +50,8 @@ def _registrar_flows() -> int:
                     "nombre": flow["name"],
                     "archivo": flow["file"],
                     "credenciales": flow.get("credentials"),
+                    "reintentos": flow.get("reintentos", 0),
+                    "reintento_espera_min": flow.get("reintento_espera_min", 5),
                 },
                 id=job_id,
                 name=f"{flow['name']} [{schedule}]",
