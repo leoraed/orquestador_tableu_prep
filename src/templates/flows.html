@@ -277,6 +277,23 @@
               placeholder="config\credentials.json">
           </div>
 
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Reintentos en caso de fallo</label>
+            <div class="d-flex gap-2 align-items-center">
+              <div>
+                <label class="form-text">Cantidad</label>
+                <input type="number" name="reintentos" id="inputReintentos"
+                  class="form-control form-control-sm" min="0" max="10" value="0" style="width:80px">
+              </div>
+              <div>
+                <label class="form-text">Espera (min)</label>
+                <input type="number" name="reintento_espera_min" id="inputReintEspera"
+                  class="form-control form-control-sm" min="1" max="60" value="5" style="width:80px">
+              </div>
+              <div class="form-text mt-3">intentos adicionales con esa espera entre cada uno</div>
+            </div>
+          </div>
+
           <div class="form-check form-switch">
             <input class="form-check-input" type="checkbox" name="enabled"
               id="inputEnabled" value="on" checked>
@@ -339,6 +356,8 @@ function abrirModalNuevo() {
   form.action = '/api/flows';
   form.reset();
   document.getElementById('inputEnabled').checked = true;
+  document.getElementById('inputReintentos').value  = 0;
+  document.getElementById('inputReintEspera').value = 5;
   setSchedules([]);
   _setDeps([], null);
   modal.show();
@@ -352,6 +371,8 @@ function abrirModalEditar(flow) {
   document.getElementById('inputArchivo').value      = flow.file        || '';
   document.getElementById('inputCredenciales').value = flow.credentials || '';
   document.getElementById('inputEnabled').checked    = flow.enabled;
+  document.getElementById('inputReintentos').value   = flow.reintentos          ?? 0;
+  document.getElementById('inputReintEspera').value  = flow.reintento_espera_min ?? 5;
   setSchedules(flow.schedules || []);
   _setDeps(flow.depends_on, flow.name);
   modal.show();

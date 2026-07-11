@@ -35,6 +35,8 @@ def load_flows() -> list[dict]:
         flow["schedules"] = [s for s in (flow["schedules"] or []) if s]
         if "depends_on" not in flow:
             flow["depends_on"] = []
+        flow.setdefault("reintentos", 0)
+        flow.setdefault("reintento_espera_min", 5)
     return flows
 
 

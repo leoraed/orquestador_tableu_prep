@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, date, time as dt_time
 from typing import Optional
@@ -14,11 +15,12 @@ from sqlalchemy.orm import Session
 
 from src.database import get_db
 from src.models import EjecucionFlow
-from src.runner import ejecutar_flow
+from src.runner import ejecutar_flow, _procesos_activos, _cancelados, _lock, _matar_proceso
 from src.config import load_flows, load_settings, load_carpetas, descubrir_tfl, BASE_DIR, _load_yaml, _save_yaml
 from src.scheduler import inicializar_scheduler, detener_scheduler, recargar_scheduler, scheduler
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+logger = logging.getLogger(__name__)
 
 
 def _duracion(inicio: datetime, fin: Optional[datetime]) -> str:
@@ -174,6 +176,8 @@ def api_crear_flow(
     enabled: Optional[str] = Form(None),
     credentials: Optional[str] = Form(None),
     depends_on: List[str] = Form(default=[]),
+    reintentos: int = Form(default=0),
+    reintento_espera_min: int = Form(default=5),
 ):
     flows = load_flows()
     if any(f["name"] == name.strip() for f in flows):
@@ -185,6 +189,8 @@ def api_crear_flow(
         "enabled": enabled is not None,
         "credentials": credentials.strip() if credentials and credentials.strip() else None,
         "depends_on": depends_on,
+        "reintentos": reintentos,
+        "reintento_espera_min": reintento_espera_min,
     })
     _guardar_flows(flows)
     recargar_scheduler()
@@ -200,6 +206,8 @@ def api_editar_flow(
     enabled: Optional[str] = Form(None),
     credentials: Optional[str] = Form(None),
     depends_on: List[str] = Form(default=[]),
+    reintentos: int = Form(default=0),
+    reintento_espera_min: int = Form(default=5),
 ):
     flows = load_flows()
     idx = next((i for i, f in enumerate(flows) if f["name"] == nombre), None)
@@ -212,6 +220,8 @@ def api_editar_flow(
         "enabled": enabled is not None,
         "credentials": credentials.strip() if credentials and credentials.strip() else None,
         "depends_on": depends_on,
+        "reintentos": reintentos,
+        "reintento_espera_min": reintento_espera_min,
     }
     _guardar_flows(flows)
     recargar_scheduler()
@@ -242,6 +252,8 @@ def api_ejecutar_manual(nombre: str, background_tasks: BackgroundTasks):
         credenciales=flow.get("credentials"),
         disparador="manual",
         grupo_id=str(uuid.uuid4()),
+        reintentos=flow.get("reintentos", 0),
+        reintento_espera_min=flow.get("reintento_espera_min", 5),
     )
     return _redir("/", f"Flow '{nombre}' iniciado manualmente.")
 
@@ -290,6 +302,31 @@ def api_guardar_configuracion(
     s["ttl_grupo_horas"] = ttl_grupo_horas
     _guardar_settings(s)
     return _redir("/configuracion", "Configuración guardada. Reiniciá el servidor para aplicar cambios de DB o timezone.")
+
+
+@app.post("/api/ejecuciones/{eid}/cancelar")
+def api_cancelar_ejecucion(eid: int, db: Session = Depends(get_db)):
+    ej = db.query(EjecucionFlow).filter(EjecucionFlow.id == eid).first()
+    if not ej:
+        return _redir("/historial", f"Error: ejecución #{eid} no encontrada.")
+    if ej.estado != "en_proceso":
+        return _redir("/historial", f"La ejecución #{eid} ya terminó ({ej.estado}).")
+
+    with _lock:
+        _cancelados.add(eid)
+        proc = _procesos_activos.get(eid)
+
+    if proc:
+        _matar_proceso(proc)
+        logger.info(f"Proceso #{eid} terminado por cancelación manual (taskkill /F /T).")
+    else:
+        # El proceso aún no arrancó o ya terminó; actualizar DB directamente
+        ej.estado = "cancelado"
+        ej.fin = datetime.utcnow()
+        ej.error = "Cancelado manualmente."
+        db.commit()
+
+    return _redir("/historial", f"Ejecución #{eid} cancelada.")
 
 
 # ── API JSON ───────────────────────────────────────────────────────────────

@@ -46,17 +46,31 @@
           <td>
             {% if e.disparador == 'manual' %}
               <span class="badge bg-info rounded-pill">manual</span>
+            {% elif e.disparador == 'dependencia' %}
+              <span class="badge bg-primary rounded-pill">dependencia</span>
+            {% elif e.disparador and e.disparador.startswith('reintento') %}
+              <span class="badge bg-warning text-dark rounded-pill">{{ e.disparador }}</span>
             {% else %}
               <span class="badge bg-secondary rounded-pill">scheduler</span>
             {% endif %}
           </td>
-          <td>
-            {% if e.salida or e.error %}
-            <button class="btn btn-sm btn-outline-secondary py-0"
-              onclick="verDetalle({{ e.id }}, {{ e.salida | tojson }}, {{ e.error | tojson }})">
-              <i class="bi bi-terminal"></i>
-            </button>
-            {% endif %}
+          <td class="text-end">
+            <div class="d-flex gap-1 justify-content-end">
+              {% if e.salida or e.error %}
+              <button class="btn btn-sm btn-outline-secondary py-0"
+                onclick="verDetalle({{ e.id }}, {{ e.salida | tojson }}, {{ e.error | tojson }})">
+                <i class="bi bi-terminal"></i>
+              </button>
+              {% endif %}
+              {% if e.estado == 'en_proceso' %}
+              <form action="/api/ejecuciones/{{ e.id }}/cancelar" method="post"
+                onsubmit="return confirm('¿Cancelar la ejecución #{{ e.id }}?')">
+                <button class="btn btn-sm btn-outline-danger py-0" title="Cancelar">
+                  <i class="bi bi-stop-fill"></i>
+                </button>
+              </form>
+              {% endif %}
+            </div>
           </td>
         </tr>
         {% endfor %}
