@@ -126,6 +126,36 @@ def pagina_flows(request: Request, msg: str = None):
     })
 
 
+@app.get("/grafo")
+def pagina_grafo(request: Request, db: Session = Depends(get_db)):
+    flows = load_flows()
+    ultimos_estados = {}
+    for flow in flows:
+        ej = db.query(EjecucionFlow).filter(
+            EjecucionFlow.nombre_flow == flow["name"]
+        ).order_by(EjecucionFlow.inicio.desc()).first()
+        if ej:
+            ultimos_estados[flow["name"]] = ej.estado
+    return templates.TemplateResponse("grafo.html", {
+        "request": request,
+        "flows": flows,
+        "ultimos_estados": ultimos_estados,
+        "active": "grafo",
+    })
+
+
+@app.get("/api/grafo/estados")
+def api_grafo_estados(db: Session = Depends(get_db)):
+    flows = load_flows()
+    result = {}
+    for flow in flows:
+        ej = db.query(EjecucionFlow).filter(
+            EjecucionFlow.nombre_flow == flow["name"]
+        ).order_by(EjecucionFlow.inicio.desc()).first()
+        result[flow["name"]] = ej.estado if ej else None
+    return result
+
+
 @app.get("/configuracion")
 def pagina_configuracion(request: Request, msg: str = None):
     return templates.TemplateResponse("configuracion.html", {
@@ -293,6 +323,9 @@ def api_guardar_configuracion(
     timeout_segundos: int = Form(...),
     database_url: str = Form(...),
     ttl_grupo_horas: float = Form(...),
+    telegram_bot_token: Optional[str] = Form(None),
+    telegram_chat_id: Optional[str] = Form(None),
+    telegram_resumen_cron: Optional[str] = Form(None),
 ):
     s = load_settings()
     s["prep_cli_path"] = prep_cli_path.strip()
@@ -300,8 +333,12 @@ def api_guardar_configuracion(
     s["timeout_segundos"] = timeout_segundos
     s["database_url"] = database_url.strip()
     s["ttl_grupo_horas"] = ttl_grupo_horas
+    s["telegram_bot_token"] = (telegram_bot_token or "").strip()
+    s["telegram_chat_id"] = (telegram_chat_id or "").strip()
+    s["telegram_resumen_cron"] = (telegram_resumen_cron or "").strip()
     _guardar_settings(s)
-    return _redir("/configuracion", "Configuración guardada. Reiniciá el servidor para aplicar cambios de DB o timezone.")
+    recargar_scheduler()
+    return _redir("/configuracion", "Configuración guardada.")
 
 
 @app.post("/api/ejecuciones/{eid}/cancelar")

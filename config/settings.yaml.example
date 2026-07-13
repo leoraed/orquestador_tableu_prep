@@ -4,3 +4,6 @@ log_dir: logs
 timezone: America/Argentina/Buenos_Aires
 timeout_segundos: 3600
 ttl_grupo_horas: 2
+telegram_bot_token: ''
+telegram_chat_id: ''
+telegram_resumen_cron: ''

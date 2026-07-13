@@ -1,0 +1,249 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h5 class="mb-0 fw-bold">Grafo de dependencias</h5>
+  <div class="d-flex gap-3 align-items-center small text-muted">
+    <span><span class="badge" style="background:#4fc3f7">&nbsp;</span> Sin ejecuciones</span>
+    <span><span class="badge" style="background:#198754">&nbsp;</span> Exitoso</span>
+    <span><span class="badge" style="background:#dc3545">&nbsp;</span> Fallido</span>
+    <span><span class="badge" style="background:#fd7e14">&nbsp;</span> En proceso</span>
+    <span><span class="badge" style="background:#6c757d">&nbsp;</span> Cancelado / Inactivo</span>
+  </div>
+</div>
+
+{% if not flows %}
+<div class="card">
+  <div class="text-center text-muted py-5">
+    <i class="bi bi-diagram-3 fs-2 d-block mb-2"></i>
+    No hay flows configurados aún.
+  </div>
+</div>
+{% else %}
+
+<div class="card">
+  <div class="card-body p-0" style="position:relative">
+    <div style="position:absolute;top:10px;right:12px;z-index:10;display:flex;gap:6px">
+      <button class="btn btn-sm btn-outline-secondary" onclick="reordenar()" title="Reordenar automáticamente">
+        <i class="bi bi-arrow-repeat"></i>
+      </button>
+      <span id="autoRefreshBadge" class="badge bg-secondary align-self-center" style="font-size:.7rem">
+        actualizando en <span id="cuentaRegresiva">15</span>s
+      </span>
+    </div>
+    <div id="grafo" style="height:560px;border-radius:10px;"></div>
+  </div>
+</div>
+
+<!-- Panel detalle -->
+<div id="panelDetalle" class="card mt-3 d-none">
+  <div class="card-header py-2 d-flex justify-content-between align-items-center">
+    <span id="detalleNombre" class="fw-semibold"></span>
+    <button class="btn btn-sm btn-outline-secondary py-0"
+      onclick="document.getElementById('panelDetalle').classList.add('d-none')">
+      <i class="bi bi-x"></i>
+    </button>
+  </div>
+  <div class="card-body small">
+    <div class="row g-3 align-items-start">
+      <div class="col-5">
+        <div class="text-muted mb-1">Archivo</div>
+        <div id="detalleArchivo" class="font-monospace" style="word-break:break-all"></div>
+      </div>
+      <div class="col-2">
+        <div class="text-muted mb-1">Schedule(s)</div>
+        <div id="detalleSchedule"></div>
+      </div>
+      <div class="col-2">
+        <div class="text-muted mb-1">Depende de</div>
+        <div id="detalleDeps"></div>
+      </div>
+      <div class="col-3 text-end">
+        <div class="text-muted mb-1">Último estado</div>
+        <div id="detalleEstado" class="mb-2"></div>
+        <button id="btnEjecutar" class="btn btn-sm btn-primary" onclick="ejecutarFlow()">
+          <i class="bi bi-play-fill me-1"></i>Ejecutar ahora
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if flows %}
+<link href="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.css" rel="stylesheet">
+<script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+<script>
+const flows        = {{ flows | tojson }};
+const estadosInit  = {{ ultimos_estados | tojson }};
+
+// ── Colores ──────────────────────────────────────────────────────────────────
+function colorPorEstado(estado, enabled) {
+  if (!enabled) return { background: '#6c757d', border: '#495057' };
+  switch (estado) {
+    case 'exitoso':    return { background: '#198754', border: '#146c43' };
+    case 'fallido':    return { background: '#dc3545', border: '#b02a37' };
+    case 'en_proceso': return { background: '#fd7e14', border: '#c96a00' };
+    case 'cancelado':  return { background: '#6c757d', border: '#495057' };
+    default:           return { background: '#4fc3f7', border: '#0288d1' };
+  }
+}
+
+function badgeEstado(estado) {
+  const mapa = {
+    exitoso:    ['bg-success',   'Exitoso'],
+    fallido:    ['bg-danger',    'Fallido'],
+    en_proceso: ['bg-warning text-dark', 'En proceso'],
+    cancelado:  ['bg-secondary', 'Cancelado'],
+  };
+  const [cls, txt] = mapa[estado] || ['bg-light text-muted border', 'Sin ejecuciones'];
+  return `<span class="badge ${cls} rounded-pill">${txt}</span>`;
+}
+
+// ── Dataset ──────────────────────────────────────────────────────────────────
+const nodesDS = new vis.DataSet(flows.map(f => ({
+  id:    f.name,
+  label: f.name,
+  color: { ...colorPorEstado(estadosInit[f.name] ?? null, f.enabled), highlight: { background: '#fff', border: '#333' } },
+  font:  { color: '#fff', size: 14, bold: true },
+  shape: 'box',
+  margin: 10,
+  shadow: true,
+})));
+
+const edgesDS = new vis.DataSet();
+flows.forEach(f => {
+  (f.depends_on || []).forEach(dep => {
+    edgesDS.add({
+      from: dep,
+      to:   f.name,
+      arrows: 'to',
+      color:  { color: '#adb5bd', highlight: '#495057', opacity: 0.8 },
+      smooth: { type: 'cubicBezier', forceDirection: 'vertical', roundness: 0.4 },
+      width: 2,
+    });
+  });
+});
+
+// ── Red ──────────────────────────────────────────────────────────────────────
+const container = document.getElementById('grafo');
+const network = new vis.Network(
+  container,
+  { nodes: nodesDS, edges: edgesDS },
+  {
+    layout: {
+      hierarchical: {
+        enabled: true,
+        direction: 'UD',
+        sortMethod: 'directed',
+        levelSeparation: 130,
+        nodeSpacing: 170,
+      },
+    },
+    physics: { enabled: false },
+    interaction: { dragNodes: true, hover: true, zoomView: true, dragView: true },
+    edges: { selectionWidth: 3 },
+  }
+);
+
+// Una vez renderizado el layout jerárquico, liberar la física para arrastre libre
+network.once('afterDrawing', () => {
+  network.setOptions({ layout: { hierarchical: { enabled: false } } });
+});
+
+function reordenar() {
+  network.setOptions({
+    layout: { hierarchical: { enabled: true, direction: 'UD', sortMethod: 'directed', levelSeparation: 130, nodeSpacing: 170 } },
+    physics: { enabled: false },
+  });
+  network.fit();
+  setTimeout(() => {
+    network.setOptions({ layout: { hierarchical: { enabled: false } } });
+  }, 100);
+}
+
+// ── Detalle al hacer click ────────────────────────────────────────────────────
+let flowActivo = null;
+
+network.on('click', params => {
+  if (!params.nodes.length) return;
+  const nombre = params.nodes[0];
+  const flow   = flows.find(f => f.name === nombre);
+  if (!flow) return;
+  flowActivo = nombre;
+
+  document.getElementById('detalleNombre').textContent = flow.name;
+  document.getElementById('detalleArchivo').textContent = flow.file;
+  document.getElementById('detalleSchedule').innerHTML =
+    flow.schedules && flow.schedules.length
+      ? flow.schedules.map(s => `<code>${s}</code>`).join('<br>')
+      : '<span class="text-muted fst-italic">ninguno</span>';
+  document.getElementById('detalleDeps').innerHTML =
+    flow.depends_on && flow.depends_on.length
+      ? flow.depends_on.join('<br>')
+      : '<span class="text-muted fst-italic">ninguna</span>';
+  document.getElementById('detalleEstado').innerHTML = badgeEstado(estadosInit[nombre] ?? null);
+  document.getElementById('panelDetalle').classList.remove('d-none');
+});
+
+// ── Ejecutar flow ─────────────────────────────────────────────────────────────
+async function ejecutarFlow() {
+  if (!flowActivo) return;
+  if (!confirm(`¿Ejecutar "${flowActivo}" ahora?`)) return;
+
+  const btn = document.getElementById('btnEjecutar');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Iniciando...';
+
+  await fetch(`/api/flows/${encodeURIComponent(flowActivo)}/ejecutar`, { method: 'POST', redirect: 'manual' });
+
+  // Actualizar nodo a "en_proceso" inmediatamente
+  actualizarColorNodo(flowActivo, 'en_proceso');
+  document.getElementById('detalleEstado').innerHTML = badgeEstado('en_proceso');
+
+  btn.disabled = false;
+  btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Ejecutar ahora';
+}
+
+// ── Actualizar colores desde API ──────────────────────────────────────────────
+function actualizarColorNodo(nombre, estado) {
+  const flow = flows.find(f => f.name === nombre);
+  if (!flow) return;
+  estadosInit[nombre] = estado;
+  nodesDS.update({
+    id: nombre,
+    color: { ...colorPorEstado(estado, flow.enabled), highlight: { background: '#fff', border: '#333' } },
+  });
+}
+
+async function refrescarEstados() {
+  try {
+    const resp = await fetch('/api/grafo/estados');
+    const estados = await resp.json();
+    Object.entries(estados).forEach(([nombre, estado]) => {
+      if (estadosInit[nombre] !== estado) {
+        actualizarColorNodo(nombre, estado);
+        if (flowActivo === nombre) {
+          document.getElementById('detalleEstado').innerHTML = badgeEstado(estado);
+        }
+      }
+    });
+  } catch (_) {}
+}
+
+// Cuenta regresiva y refresco automático cada 15s
+let segundos = 15;
+setInterval(() => {
+  segundos--;
+  document.getElementById('cuentaRegresiva').textContent = segundos;
+  if (segundos <= 0) {
+    segundos = 15;
+    refrescarEstados();
+  }
+}, 1000);
+</script>
+{% endif %}
+{% endblock %}
