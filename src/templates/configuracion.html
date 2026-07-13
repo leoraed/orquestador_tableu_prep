@@ -59,6 +59,37 @@
         El <strong>path al CLI</strong> y el <strong>timeout</strong> se aplican en la próxima ejecución.
       </div>
 
+      <hr class="my-4">
+
+      <div class="mb-3">
+        <label class="form-label fw-semibold">
+          <i class="bi bi-telegram me-1 text-primary"></i>Telegram — Bot Token
+        </label>
+        <input type="text" name="telegram_bot_token" class="form-control font-monospace"
+          value="{{ settings.telegram_bot_token | default('') }}"
+          placeholder="123456789:ABC-DEF...">
+        <div class="form-text">Token del bot obtenido desde @BotFather.</div>
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label fw-semibold">Telegram — Chat ID</label>
+        <input type="text" name="telegram_chat_id" class="form-control font-monospace"
+          value="{{ settings.telegram_chat_id | default('') }}"
+          placeholder="-1001234567890">
+        <div class="form-text">ID del chat o grupo donde se envían los mensajes.</div>
+      </div>
+
+      <div class="mb-4">
+        <label class="form-label fw-semibold">Resumen diario — Horario (cron)</label>
+        <input type="text" name="telegram_resumen_cron" class="form-control font-monospace"
+          value="{{ settings.telegram_resumen_cron | default('') }}"
+          placeholder="0 20 * * *">
+        <div class="form-text">
+          Dejar vacío para desactivar. Ejemplo: <code>0 20 * * *</code> = todos los días a las 20:00.
+          El resumen incluye total de ejecuciones, cuántas fallaron y qué flows.
+        </div>
+      </div>
+
       <button type="submit" class="btn btn-primary">
         <i class="bi bi-floppy me-1"></i>Guardar cambios
       </button>
