@@ -111,10 +111,9 @@ def _correr_subprocess(
     cli = s["prep_cli_path"]
     timeout = s.get("timeout_segundos", 3600)
 
-    cmd = ["cmd", "/c", cli, "-t", archivo_abs]
+    cred_abs = None
     if credenciales:
         cred_abs = str(BASE_DIR / credenciales) if not Path(credenciales).is_absolute() else credenciales
-        cmd += ["-c", cred_abs]
 
     db = SessionLocal()
     ejecucion = EjecucionFlow(
@@ -130,19 +129,24 @@ def _correr_subprocess(
     db.refresh(ejecucion)
     eid = ejecucion.id
 
-    logger.info(f"[{nombre}] Iniciando [{disparador}] (grupo {grupo_id[:8]}): {' '.join(cmd)}")
-
     tmp_fd, tmp_path = tempfile.mkstemp(suffix=".log", prefix="tprep_")
     os.close(tmp_fd)
 
+    # Construir el comando como string para que cmd.exe interprete la redirección
+    # (> file 2>&1 captura output de cmd.exe Y todos sus procesos hijo, incluido Java)
+    partes = [f'"{cli}"', "-t", f'"{archivo_abs}"']
+    if cred_abs:
+        partes += ["-c", f'"{cred_abs}"']
+    partes += [">", f'"{tmp_path}"', "2>&1"]
+    cmd_str = " ".join(partes)
+
+    logger.info(f"[{nombre}] Iniciando [{disparador}] (grupo {grupo_id[:8]}): {cmd_str}")
+
     try:
-        with open(tmp_path, "wb") as logfile:
-            proc = subprocess.Popen(
-                cmd,
-                stdout=logfile,
-                stderr=logfile,
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
-            )
+        proc = subprocess.Popen(
+            ["cmd", "/c", cmd_str],
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+        )
         with _lock:
             _procesos_activos[eid] = proc
 
