@@ -134,7 +134,7 @@ def _correr_subprocess(
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.STDOUT,  # unifica stderr en stdout
             text=True,
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
         )
@@ -142,13 +142,14 @@ def _correr_subprocess(
             _procesos_activos[eid] = proc
 
         try:
-            stdout, stderr = proc.communicate(timeout=timeout)
+            output, _ = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
             _matar_proceso(proc)
             proc.communicate()
             raise
 
         ejecucion.fin = datetime.utcnow()
+        ejecucion.salida = output or "(sin salida)"
 
         with _lock:
             fue_cancelado = eid in _cancelados
@@ -160,12 +161,10 @@ def _correr_subprocess(
             logger.warning(f"[{nombre}] Cancelado (grupo {grupo_id[:8]}).")
         elif proc.returncode == 0:
             ejecucion.estado = "exitoso"
-            ejecucion.salida = stdout
             logger.info(f"[{nombre}] Completado exitosamente (grupo {grupo_id[:8]}).")
         else:
             ejecucion.estado = "fallido"
-            ejecucion.salida = stdout
-            ejecucion.error = stderr
+            ejecucion.error = f"Código de salida {proc.returncode}. Ver salida para detalles."
             logger.error(f"[{nombre}] Falló — código {proc.returncode} (grupo {grupo_id[:8]}).")
 
     except subprocess.TimeoutExpired:
