@@ -132,19 +132,19 @@ def _correr_subprocess(
     tmp_fd, tmp_path = tempfile.mkstemp(suffix=".log", prefix="tprep_")
     os.close(tmp_fd)
 
-    # Construir el comando como string para que cmd.exe interprete la redirección
-    # (> file 2>&1 captura output de cmd.exe Y todos sus procesos hijo, incluido Java)
-    partes = [f'"{cli}"', "-t", f'"{archivo_abs}"']
+    # list2cmdline escapa correctamente los paths con espacios para cmd.exe
+    # shell=True invoca cmd /c y permite que interprete > y 2>&1 nativamente
+    args = [cli, "-t", archivo_abs]
     if cred_abs:
-        partes += ["-c", f'"{cred_abs}"']
-    partes += [">", f'"{tmp_path}"', "2>&1"]
-    cmd_str = " ".join(partes)
+        args += ["-c", cred_abs]
+    cmd_shell = subprocess.list2cmdline(args) + f' > "{tmp_path}" 2>&1'
 
-    logger.info(f"[{nombre}] Iniciando [{disparador}] (grupo {grupo_id[:8]}): {cmd_str}")
+    logger.info(f"[{nombre}] Iniciando [{disparador}] (grupo {grupo_id[:8]}): {cmd_shell}")
 
     try:
         proc = subprocess.Popen(
-            ["cmd", "/c", cmd_str],
+            cmd_shell,
+            shell=True,
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
         )
         with _lock:
@@ -162,6 +162,11 @@ def _correr_subprocess(
         with open(tmp_path, "r", encoding="utf-8", errors="replace") as f:
             output = f.read().strip() or "(sin salida)"
         ejecucion.salida = output
+
+        # Volcar output del CLI al log de Python para que aparezca en /logs
+        for line in output.splitlines():
+            if line.strip():
+                logger.info(f"  [{nombre}] {line}")
 
         with _lock:
             fue_cancelado = eid in _cancelados
