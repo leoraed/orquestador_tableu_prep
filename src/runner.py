@@ -1,5 +1,7 @@
 import logging
+import os
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -130,26 +132,32 @@ def _correr_subprocess(
 
     logger.info(f"[{nombre}] Iniciando [{disparador}] (grupo {grupo_id[:8]}): {' '.join(cmd)}")
 
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".log", prefix="tprep_")
+    os.close(tmp_fd)
+
     try:
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,  # unifica stderr en stdout
-            text=True,
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
-        )
+        with open(tmp_path, "wb") as logfile:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=logfile,
+                stderr=logfile,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+            )
         with _lock:
             _procesos_activos[eid] = proc
 
         try:
-            output, _ = proc.communicate(timeout=timeout)
+            proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             _matar_proceso(proc)
-            proc.communicate()
+            proc.wait()
             raise
 
         ejecucion.fin = datetime.utcnow()
-        ejecucion.salida = output or "(sin salida)"
+
+        with open(tmp_path, "r", encoding="utf-8", errors="replace") as f:
+            output = f.read().strip() or "(sin salida)"
+        ejecucion.salida = output
 
         with _lock:
             fue_cancelado = eid in _cancelados
@@ -180,6 +188,10 @@ def _correr_subprocess(
     finally:
         with _lock:
             _procesos_activos.pop(eid, None)
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
         db.commit()
         db.close()
 
