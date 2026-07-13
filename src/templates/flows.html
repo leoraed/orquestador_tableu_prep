@@ -139,8 +139,27 @@
       <i class="bi bi-plus-lg me-1"></i>Nuevo manual
     </button>
   </div>
+  {% if flows %}
+  <div class="px-3 pt-3 pb-2 border-bottom d-flex gap-2 flex-wrap">
+    <input id="filtroTexto" type="search" class="form-control form-control-sm"
+      placeholder="Buscar por nombre o archivo..." style="max-width:280px"
+      oninput="filtrarFlows()">
+    <select id="filtroEstado" class="form-select form-select-sm" style="width:auto" onchange="filtrarFlows()">
+      <option value="">Todos los estados</option>
+      <option value="activo">Activo</option>
+      <option value="inactivo">Inactivo</option>
+    </select>
+    <select id="filtroTipo" class="form-select form-select-sm" style="width:auto" onchange="filtrarFlows()">
+      <option value="">Todos los tipos</option>
+      <option value="schedule">Con schedule</option>
+      <option value="dependencia">Por dependencia</option>
+    </select>
+    <button class="btn btn-sm btn-outline-secondary" onclick="limpiarFiltros()">
+      <i class="bi bi-x-lg me-1"></i>Limpiar
+    </button>
+    <span id="contadorFlows" class="align-self-center text-muted small ms-auto"></span>
+  </div>
   <div class="card-body p-0">
-    {% if flows %}
     <table class="table mb-0">
       <thead>
         <tr>
@@ -154,7 +173,11 @@
       </thead>
       <tbody>
         {% for flow in flows %}
-        <tr>
+        <tr class="flow-row"
+          data-nombre="{{ flow.name | lower }}"
+          data-archivo="{{ flow.file | lower }}"
+          data-estado="{{ 'activo' if flow.enabled else 'inactivo' }}"
+          data-tipo="{{ 'schedule' if flow.schedules else 'dependencia' }}">
           <td class="fw-semibold">{{ flow.name }}</td>
           <td class="text-muted small font-monospace" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
               title="{{ flow.file }}">{{ flow.file }}</td>
@@ -204,13 +227,18 @@
         {% endfor %}
       </tbody>
     </table>
-    {% else %}
+    <div id="sinResultados" class="text-center text-muted py-4 d-none">
+      <i class="bi bi-search me-1"></i>Ningún flow coincide con los filtros.
+    </div>
+  </div>
+  {% else %}
+  <div class="card-body">
     <div class="text-center text-muted py-5">
       <i class="bi bi-calendar-x fs-2 d-block mb-2"></i>
       No hay flows programados. Seleccioná uno desde "Flows en disco" o usá "+ Nuevo manual".
     </div>
-    {% endif %}
   </div>
+  {% endif %}
 </div>
 
 
@@ -315,6 +343,36 @@
 <script>
 const modal = new bootstrap.Modal(document.getElementById('modalFlow'));
 const form  = document.getElementById('formFlow');
+
+function filtrarFlows() {
+  const texto  = document.getElementById('filtroTexto').value.toLowerCase();
+  const estado = document.getElementById('filtroEstado').value;
+  const tipo   = document.getElementById('filtroTipo').value;
+  const filas  = document.querySelectorAll('.flow-row');
+  let visibles = 0;
+
+  filas.forEach(fila => {
+    const ok =
+      (!texto  || fila.dataset.nombre.includes(texto) || fila.dataset.archivo.includes(texto)) &&
+      (!estado || fila.dataset.estado === estado) &&
+      (!tipo   || fila.dataset.tipo === tipo);
+    fila.style.display = ok ? '' : 'none';
+    if (ok) visibles++;
+  });
+
+  const contador = document.getElementById('contadorFlows');
+  if (contador) contador.textContent = visibles < filas.length ? `${visibles} de ${filas.length}` : '';
+
+  const sinRes = document.getElementById('sinResultados');
+  if (sinRes) sinRes.classList.toggle('d-none', visibles > 0);
+}
+
+function limpiarFiltros() {
+  document.getElementById('filtroTexto').value = '';
+  document.getElementById('filtroEstado').value = '';
+  document.getElementById('filtroTipo').value = '';
+  filtrarFlows();
+}
 
 function agregarSchedule(valor) {
   const lista = document.getElementById('listaSchedules');
