@@ -56,12 +56,10 @@
           </td>
           <td class="text-end">
             <div class="d-flex gap-1 justify-content-end">
-              {% if e.salida or e.error %}
               <button class="btn btn-sm btn-outline-secondary py-0"
                 onclick="verDetalle({{ e.id }}, {{ e.salida | tojson }}, {{ e.error | tojson }})">
                 <i class="bi bi-terminal"></i>
               </button>
-              {% endif %}
               {% if e.estado == 'en_proceso' %}
               <form action="/api/ejecuciones/{{ e.id }}/cancelar" method="post"
                 onsubmit="return confirm('¿Cancelar la ejecución #{{ e.id }}?')">
@@ -120,7 +118,8 @@ function verDetalle(id, salida, error) {
     document.getElementById('textSalida').textContent = salida;
     secSalida.style.display = 'block';
   } else {
-    secSalida.style.display = 'none';
+    document.getElementById('textSalida').textContent = '(sin salida capturada)';
+    secSalida.style.display = 'block';
   }
 
   if (error) {
