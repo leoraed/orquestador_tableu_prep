@@ -9,6 +9,7 @@
     <span><span class="badge" style="background:#dc3545">&nbsp;</span> Fallido</span>
     <span><span class="badge" style="background:#fd7e14">&nbsp;</span> En proceso</span>
     <span><span class="badge" style="background:#6c757d">&nbsp;</span> Cancelado / Inactivo</span>
+    <span class="ms-2 border-start ps-3">○ corrió hoy &nbsp;|&nbsp; ● desactualizado</span>
   </div>
 </div>
 
@@ -60,7 +61,8 @@
       </div>
       <div class="col-3 text-end">
         <div class="text-muted mb-1">Último estado</div>
-        <div id="detalleEstado" class="mb-2"></div>
+        <div id="detalleEstado" class="mb-1"></div>
+        <div id="detalleFecha" class="text-muted small mb-2"></div>
         <button id="btnEjecutar" class="btn btn-sm btn-primary" onclick="ejecutarFlow()">
           <i class="bi bi-play-fill me-1"></i>Ejecutar ahora
         </button>
@@ -80,7 +82,7 @@
 const flows        = {{ flows | tojson }};
 const estadosInit  = {{ ultimos_estados | tojson }};
 
-// ── Colores ──────────────────────────────────────────────────────────────────
+// ── Colores y etiquetas ───────────────────────────────────────────────────────
 function colorPorEstado(estado, enabled) {
   if (!enabled) return { background: '#6c757d', border: '#495057' };
   switch (estado) {
@@ -90,6 +92,12 @@ function colorPorEstado(estado, enabled) {
     case 'cancelado':  return { background: '#6c757d', border: '#495057' };
     default:           return { background: '#4fc3f7', border: '#0288d1' };
   }
+}
+
+function etiquetaNodo(nombre, info) {
+  if (!info) return nombre;
+  const dot = info.es_hoy ? '○' : '●';
+  return `${dot} ${nombre}`;
 }
 
 function badgeEstado(estado) {
@@ -104,15 +112,18 @@ function badgeEstado(estado) {
 }
 
 // ── Dataset ──────────────────────────────────────────────────────────────────
-const nodesDS = new vis.DataSet(flows.map(f => ({
-  id:    f.name,
-  label: f.name,
-  color: { ...colorPorEstado(estadosInit[f.name] ?? null, f.enabled), highlight: { background: '#fff', border: '#333' } },
-  font:  { color: '#fff', size: 14, bold: true },
-  shape: 'box',
-  margin: 10,
-  shadow: true,
-})));
+const nodesDS = new vis.DataSet(flows.map(f => {
+  const info = estadosInit[f.name] ?? null;
+  return {
+    id:    f.name,
+    label: etiquetaNodo(f.name, info),
+    color: { ...colorPorEstado(info?.estado ?? null, f.enabled), highlight: { background: '#fff', border: '#333' } },
+    font:  { color: '#fff', size: 14, bold: true },
+    shape: 'box',
+    margin: 10,
+    shadow: true,
+  };
+}));
 
 const edgesDS = new vis.DataSet();
 flows.forEach(f => {
@@ -185,7 +196,11 @@ network.on('click', params => {
     flow.depends_on && flow.depends_on.length
       ? flow.depends_on.join('<br>')
       : '<span class="text-muted fst-italic">ninguna</span>';
-  document.getElementById('detalleEstado').innerHTML = badgeEstado(estadosInit[nombre] ?? null);
+  const info = estadosInit[nombre];
+  document.getElementById('detalleEstado').innerHTML = badgeEstado(info?.estado ?? null);
+  document.getElementById('detalleFecha').textContent = info
+    ? (info.es_hoy ? 'Hoy ' : '') + info.fecha
+    : 'Sin ejecuciones';
   document.getElementById('panelDetalle').classList.remove('d-none');
 });
 
@@ -201,21 +216,23 @@ async function ejecutarFlow() {
   await fetch(`/api/flows/${encodeURIComponent(flowActivo)}/ejecutar`, { method: 'POST', redirect: 'manual' });
 
   // Actualizar nodo a "en_proceso" inmediatamente
-  actualizarColorNodo(flowActivo, 'en_proceso');
+  actualizarNodo(flowActivo, { estado: 'en_proceso', es_hoy: true, fecha: new Date().toLocaleString('es-AR') });
   document.getElementById('detalleEstado').innerHTML = badgeEstado('en_proceso');
+  document.getElementById('detalleFecha').textContent = 'Hoy';
 
   btn.disabled = false;
   btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Ejecutar ahora';
 }
 
 // ── Actualizar colores desde API ──────────────────────────────────────────────
-function actualizarColorNodo(nombre, estado) {
+function actualizarNodo(nombre, info) {
   const flow = flows.find(f => f.name === nombre);
   if (!flow) return;
-  estadosInit[nombre] = estado;
+  estadosInit[nombre] = info;
   nodesDS.update({
-    id: nombre,
-    color: { ...colorPorEstado(estado, flow.enabled), highlight: { background: '#fff', border: '#333' } },
+    id:    nombre,
+    label: etiquetaNodo(nombre, info),
+    color: { ...colorPorEstado(info?.estado ?? null, flow.enabled), highlight: { background: '#fff', border: '#333' } },
   });
 }
 
@@ -223,11 +240,19 @@ async function refrescarEstados() {
   try {
     const resp = await fetch('/api/grafo/estados');
     const estados = await resp.json();
-    Object.entries(estados).forEach(([nombre, estado]) => {
-      if (estadosInit[nombre] !== estado) {
-        actualizarColorNodo(nombre, estado);
+    Object.entries(estados).forEach(([nombre, info]) => {
+      const anterior = estadosInit[nombre];
+      const cambio = !anterior && info ||
+                     anterior && !info ||
+                     anterior?.estado !== info?.estado ||
+                     anterior?.es_hoy !== info?.es_hoy;
+      if (cambio) {
+        actualizarNodo(nombre, info);
         if (flowActivo === nombre) {
-          document.getElementById('detalleEstado').innerHTML = badgeEstado(estado);
+          document.getElementById('detalleEstado').innerHTML = badgeEstado(info?.estado ?? null);
+          document.getElementById('detalleFecha').textContent = info
+            ? (info.es_hoy ? 'Hoy ' : '') + info.fecha
+            : 'Sin ejecuciones';
         }
       }
     });

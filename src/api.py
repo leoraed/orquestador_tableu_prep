@@ -126,6 +126,17 @@ def pagina_flows(request: Request, msg: str = None):
     })
 
 
+def _info_ejecucion(ej) -> dict | None:
+    if not ej:
+        return None
+    inicio_hoy = datetime.combine(date.today(), dt_time.min)
+    return {
+        "estado": ej.estado,
+        "es_hoy": ej.inicio >= inicio_hoy,
+        "fecha": ej.inicio.strftime("%d/%m/%Y %H:%M"),
+    }
+
+
 @app.get("/grafo")
 def pagina_grafo(request: Request, db: Session = Depends(get_db)):
     flows = load_flows()
@@ -134,8 +145,9 @@ def pagina_grafo(request: Request, db: Session = Depends(get_db)):
         ej = db.query(EjecucionFlow).filter(
             EjecucionFlow.nombre_flow == flow["name"]
         ).order_by(EjecucionFlow.inicio.desc()).first()
-        if ej:
-            ultimos_estados[flow["name"]] = ej.estado
+        info = _info_ejecucion(ej)
+        if info:
+            ultimos_estados[flow["name"]] = info
     return templates.TemplateResponse("grafo.html", {
         "request": request,
         "flows": flows,
@@ -152,7 +164,7 @@ def api_grafo_estados(db: Session = Depends(get_db)):
         ej = db.query(EjecucionFlow).filter(
             EjecucionFlow.nombre_flow == flow["name"]
         ).order_by(EjecucionFlow.inicio.desc()).first()
-        result[flow["name"]] = ej.estado if ej else None
+        result[flow["name"]] = _info_ejecucion(ej)
     return result
 
 
