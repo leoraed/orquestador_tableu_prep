@@ -18,3 +18,4 @@ class EjecucionFlow(Base):
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     disparador: Mapped[str] = mapped_column(String(20), default="scheduler")  # scheduler | manual | dependencia
     grupo_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    pipeline_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)

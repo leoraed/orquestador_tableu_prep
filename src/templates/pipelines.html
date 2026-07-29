@@ -1,0 +1,369 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h5 class="mb-0 fw-bold">Pipelines</h5>
+  <button class="btn btn-primary" onclick="abrirModalNuevo()">
+    <i class="bi bi-plus-lg me-1"></i>Nuevo pipeline
+  </button>
+</div>
+
+{% if pipelines %}
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table mb-0">
+      <thead>
+        <tr>
+          <th>Nombre</th>
+          <th>Schedules</th>
+          <th>Flows</th>
+          <th>Próxima ejecución</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for pipeline in pipelines %}
+        <tr>
+          <td class="fw-semibold">{{ pipeline.name }}</td>
+          <td>
+            {% if pipeline.schedules %}
+              {% for s in pipeline.schedules %}
+                <code class="d-block">{{ s }}</code>
+              {% endfor %}
+            {% else %}
+              <span class="text-muted small fst-italic">solo manual</span>
+            {% endif %}
+          </td>
+          <td>
+            <span class="badge bg-light text-dark border">{{ pipeline.flows | length }} flow(s)</span>
+            <div class="small text-muted mt-1">
+              {% for step in pipeline.flows %}
+                {{ step.flow }}{% if not loop.last %} → {% endif %}
+              {% endfor %}
+            </div>
+          </td>
+          <td class="text-muted small">{{ jobs.get(pipeline.name, '—') }}</td>
+          <td>
+            <div class="d-flex gap-1">
+              <a href="/grafo?pipeline={{ pipeline.name | urlencode }}"
+                 class="btn btn-sm btn-outline-secondary" title="Ver grafo">
+                <i class="bi bi-diagram-3"></i>
+              </a>
+              <form action="/api/pipelines/{{ pipeline.name }}/ejecutar" method="post">
+                <button class="btn btn-sm btn-outline-primary" title="Ejecutar ahora">
+                  <i class="bi bi-play-fill"></i>
+                </button>
+              </form>
+              <button class="btn btn-sm btn-outline-secondary" title="Editar"
+                data-pipeline="{{ pipeline | tojson | forceescape }}"
+                onclick="abrirModalEditar(JSON.parse(this.dataset.pipeline))">
+                <i class="bi bi-pencil"></i>
+              </button>
+              <form action="/api/pipelines/{{ pipeline.name }}/eliminar" method="post"
+                onsubmit="return confirm('¿Eliminar el pipeline {{ pipeline.name }}?')">
+                <button class="btn btn-sm btn-outline-danger" title="Eliminar">
+                  <i class="bi bi-trash"></i>
+                </button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% else %}
+<div class="card">
+  <div class="card-body text-center text-muted py-5">
+    <i class="bi bi-diagram-2 fs-2 d-block mb-2"></i>
+    No hay pipelines configurados. Creá uno para definir secuencias de flows.
+  </div>
+</div>
+{% endif %}
+
+
+<!-- ── Modal crear / editar pipeline ─────────────────────────────────────── -->
+<div class="modal fade" id="modalPipeline" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title fw-bold" id="modalTitulo">Nuevo Pipeline</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Nombre <span class="text-danger">*</span></label>
+          <input type="text" id="inputNombre" class="form-control" placeholder="Recarga diaria" required>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Schedules (cron)</label>
+          <div id="listaSchedules"></div>
+          <button type="button" class="btn btn-sm btn-outline-secondary mt-1"
+            onclick="agregarSchedule('')">
+            <i class="bi bi-plus-lg me-1"></i>Agregar horario
+          </button>
+          <div class="form-text mt-1">
+            <code>0 6 * * *</code> diario a las 6 | <code>*/5 * * * *</code> cada 5 min.
+            Dejá vacío para disparo solo manual.
+          </div>
+        </div>
+
+        <hr>
+
+        <div class="row g-3">
+          <!-- Columna izquierda: flows disponibles -->
+          <div class="col-5">
+            <label class="form-label fw-semibold">Flows disponibles</label>
+            <div class="border rounded p-2" style="max-height:280px;overflow-y:auto;background:#f8f9fa">
+              {% for flow in flows %}
+              <div class="form-check">
+                <input class="form-check-input flow-check" type="checkbox"
+                  value="{{ flow.name }}" id="fc_{{ flow.name }}"
+                  onchange="actualizarOrden()">
+                <label class="form-check-label small" for="fc_{{ flow.name }}">{{ flow.name }}</label>
+              </div>
+              {% endfor %}
+              {% if not flows %}
+              <div class="text-muted small fst-italic">No hay flows registrados.</div>
+              {% endif %}
+            </div>
+          </div>
+
+          <!-- Columna derecha: orden y dependencias -->
+          <div class="col-7">
+            <label class="form-label fw-semibold">Flows en el pipeline y sus dependencias</label>
+            <div id="seccionDependencias" class="border rounded p-2"
+              style="min-height:120px;max-height:280px;overflow-y:auto;background:#fff">
+              <div class="text-muted small fst-italic py-2 text-center" id="sinFlows">
+                Seleccioná flows a la izquierda.
+              </div>
+            </div>
+            <div class="form-text mt-1">
+              Para cada flow, elegí de qué otros flows del pipeline depende.
+            </div>
+          </div>
+        </div>
+
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="btnGuardar" onclick="guardarPipeline()">Guardar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+const modal = new bootstrap.Modal(document.getElementById('modalPipeline'));
+const todosFlows = {{ flows | map(attribute='name') | list | tojson }};
+let modoEdicion = null; // nombre del pipeline que se está editando, o null
+
+function agregarSchedule(valor) {
+  const lista = document.getElementById('listaSchedules');
+  const div = document.createElement('div');
+  div.className = 'input-group mb-2 schedule-row';
+  div.innerHTML = `
+    <input type="text" class="form-control font-monospace schedule-input"
+      placeholder="0 6 * * *" value="${valor || ''}">
+    <button type="button" class="btn btn-outline-danger"
+      onclick="this.closest('.schedule-row').remove()">
+      <i class="bi bi-x-lg"></i>
+    </button>
+  `;
+  lista.appendChild(div);
+  if (!valor) div.querySelector('input').focus();
+}
+
+function setSchedules(schedules) {
+  document.getElementById('listaSchedules').innerHTML = '';
+  (schedules || []).forEach(s => agregarSchedule(s));
+}
+
+// ── Gestión de flows y dependencias ─────────────────────────────────────────
+
+function flowsSeleccionados() {
+  return [...document.querySelectorAll('.flow-check:checked')].map(c => c.value);
+}
+
+function actualizarOrden() {
+  const seleccionados = flowsSeleccionados();
+  const contenedor = document.getElementById('seccionDependencias');
+  const sinFlows = document.getElementById('sinFlows');
+
+  if (seleccionados.length === 0) {
+    contenedor.innerHTML = '';
+    const msg = document.createElement('div');
+    msg.className = 'text-muted small fst-italic py-2 text-center';
+    msg.id = 'sinFlows';
+    msg.textContent = 'Seleccioná flows a la izquierda.';
+    contenedor.appendChild(msg);
+    return;
+  }
+
+  // Preservar deps existentes antes de redibujar
+  const depsActuales = {};
+  contenedor.querySelectorAll('.dep-section').forEach(sec => {
+    const flowNombre = sec.dataset.flow;
+    depsActuales[flowNombre] = [...sec.querySelectorAll('.dep-check:checked')].map(c => c.value);
+  });
+
+  contenedor.innerHTML = '';
+
+  seleccionados.forEach(nombre => {
+    const otros = seleccionados.filter(n => n !== nombre);
+    const depsGuardadas = depsActuales[nombre] || [];
+
+    const sec = document.createElement('div');
+    sec.className = 'dep-section mb-3 pb-2 border-bottom';
+    sec.dataset.flow = nombre;
+
+    const header = document.createElement('div');
+    header.className = 'd-flex align-items-center gap-2 mb-1';
+    header.innerHTML = `
+      <span class="badge bg-primary rounded-pill" style="font-size:.75rem">${nombre}</span>
+      <span class="text-muted small">depende de:</span>
+    `;
+    sec.appendChild(header);
+
+    if (otros.length === 0) {
+      const sinDeps = document.createElement('span');
+      sinDeps.className = 'text-muted small fst-italic ms-2';
+      sinDeps.textContent = 'es el primer flow (sin dependencias)';
+      sec.appendChild(sinDeps);
+    } else {
+      const checksDiv = document.createElement('div');
+      checksDiv.className = 'ps-2';
+      otros.forEach(dep => {
+        const checked = depsGuardadas.includes(dep) ? 'checked' : '';
+        const id = `dep_${nombre}_${dep}`.replace(/\s/g, '_');
+        const label = document.createElement('div');
+        label.className = 'form-check form-check-inline mb-0';
+        label.innerHTML = `
+          <input class="form-check-input dep-check" type="checkbox"
+            value="${dep}" id="${id}" ${checked}>
+          <label class="form-check-label small" for="${id}">${dep}</label>
+        `;
+        checksDiv.appendChild(label);
+      });
+      sec.appendChild(checksDiv);
+    }
+
+    contenedor.appendChild(sec);
+  });
+}
+
+function getDepsDeFormulario() {
+  const flows = [];
+  document.querySelectorAll('.dep-section').forEach(sec => {
+    const flowNombre = sec.dataset.flow;
+    const deps = [...sec.querySelectorAll('.dep-check:checked')].map(c => c.value);
+    flows.push({ flow: flowNombre, depends_on: deps });
+  });
+  return flows;
+}
+
+// ── Abrir modales ─────────────────────────────────────────────────────────────
+
+function resetModal() {
+  document.getElementById('inputNombre').value = '';
+  setSchedules([]);
+  document.querySelectorAll('.flow-check').forEach(c => c.checked = false);
+  actualizarOrden();
+}
+
+function abrirModalNuevo() {
+  modoEdicion = null;
+  document.getElementById('modalTitulo').textContent = 'Nuevo Pipeline';
+  document.getElementById('btnGuardar').textContent = 'Crear';
+  document.getElementById('inputNombre').disabled = false;
+  resetModal();
+  modal.show();
+}
+
+function abrirModalEditar(pipeline) {
+  modoEdicion = pipeline.name;
+  document.getElementById('modalTitulo').textContent = 'Editar: ' + pipeline.name;
+  document.getElementById('btnGuardar').textContent = 'Guardar cambios';
+  document.getElementById('inputNombre').disabled = false;
+  document.getElementById('inputNombre').value = pipeline.name;
+  setSchedules(pipeline.schedules || []);
+
+  // Marcar flows
+  const flowsEnPipeline = (pipeline.flows || []).map(s => s.flow);
+  document.querySelectorAll('.flow-check').forEach(c => {
+    c.checked = flowsEnPipeline.includes(c.value);
+  });
+
+  // Renderizar sección de deps
+  actualizarOrden();
+
+  // Cargar deps guardadas
+  (pipeline.flows || []).forEach(step => {
+    const sec = document.querySelector(`.dep-section[data-flow="${step.flow}"]`);
+    if (!sec) return;
+    sec.querySelectorAll('.dep-check').forEach(c => {
+      c.checked = (step.depends_on || []).includes(c.value);
+    });
+  });
+
+  modal.show();
+}
+
+// ── Guardar ───────────────────────────────────────────────────────────────────
+
+async function guardarPipeline() {
+  const nombre = document.getElementById('inputNombre').value.trim();
+  if (!nombre) {
+    alert('El nombre del pipeline no puede estar vacío.');
+    return;
+  }
+
+  const schedules = [...document.querySelectorAll('.schedule-input')]
+    .map(i => i.value.trim())
+    .filter(Boolean);
+
+  const pipelineFlows = getDepsDeFormulario();
+
+  if (pipelineFlows.length === 0) {
+    alert('El pipeline debe tener al menos un flow.');
+    return;
+  }
+
+  const data = { name: nombre, schedules, flows: pipelineFlows };
+
+  const url = modoEdicion
+    ? `/api/pipelines/${encodeURIComponent(modoEdicion)}/editar`
+    : '/api/pipelines';
+
+  const btn = document.getElementById('btnGuardar');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando...';
+
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    const result = await resp.json();
+    if (result.ok) {
+      modal.hide();
+      location.reload();
+    } else {
+      alert('Error: ' + result.error);
+    }
+  } catch (e) {
+    alert('Error de red: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = modoEdicion ? 'Guardar cambios' : 'Crear';
+  }
+}
+</script>
+{% endblock %}

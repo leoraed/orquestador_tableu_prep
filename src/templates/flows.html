@@ -20,7 +20,6 @@
   </div>
   <div id="seccion-carpetas" class="card-body pb-2">
 
-    <!-- Form agregar carpeta -->
     <form id="formAgregarCarpeta" action="/api/carpetas" method="post"
       class="d-none d-flex gap-2 mb-3">
       <input type="text" name="path" class="form-control form-control-sm font-monospace"
@@ -118,13 +117,13 @@
           <td class="text-end">
             {% if tfl.path in paths_registrados %}
               <span class="badge bg-success rounded-pill">
-                <i class="bi bi-check-lg me-1"></i>Programado
+                <i class="bi bi-check-lg me-1"></i>Registrado
               </span>
             {% else %}
               <button class="btn btn-sm btn-primary"
                 data-tfl="{{ tfl | tojson | forceescape }}"
                 onclick="programarDescubierto(JSON.parse(this.dataset.tfl))">
-                <i class="bi bi-calendar-plus me-1"></i>Programar
+                <i class="bi bi-plus-lg me-1"></i>Registrar
               </button>
             {% endif %}
           </td>
@@ -138,15 +137,15 @@
 
 
 <!-- ══════════════════════════════════════════════════════
-     3. FLOWS PROGRAMADOS
+     3. FLOWS REGISTRADOS
 ═══════════════════════════════════════════════════════ -->
 <div class="card">
   <div class="card-header py-2 d-flex justify-content-between align-items-center"
     style="cursor:pointer" onclick="toggleSeccion('programados')">
-    <span><i class="bi bi-calendar-check me-2 text-primary"></i>Flows programados</span>
+    <span><i class="bi bi-list-check me-2 text-primary"></i>Flows registrados</span>
     <div class="d-flex gap-2" onclick="event.stopPropagation()">
       <button class="btn btn-sm btn-primary py-0" onclick="abrirModalNuevo()">
-        <i class="bi bi-plus-lg me-1"></i>Nuevo manual
+        <i class="bi bi-plus-lg me-1"></i>Nuevo
       </button>
       <i id="chevron-programados" class="bi bi-chevron-up align-self-center text-muted"></i>
     </div>
@@ -162,11 +161,6 @@
       <option value="activo">Activo</option>
       <option value="inactivo">Inactivo</option>
     </select>
-    <select id="filtroTipo" class="form-select form-select-sm" style="width:auto" onchange="filtrarFlows()">
-      <option value="">Todos los tipos</option>
-      <option value="schedule">Con schedule</option>
-      <option value="dependencia">Por dependencia</option>
-    </select>
     <button class="btn btn-sm btn-outline-secondary" onclick="limpiarFiltros()">
       <i class="bi bi-x-lg me-1"></i>Limpiar
     </button>
@@ -178,34 +172,38 @@
         <tr>
           <th>Nombre</th>
           <th>Archivo</th>
-          <th>Schedule</th>
+          <th>Pipelines</th>
           <th>Estado</th>
-          <th>Próxima ejecución</th>
+          <th>Reintentos</th>
           <th>Acciones</th>
         </tr>
       </thead>
       <tbody>
         {% for flow in flows %}
+        {% set flow_pipelines = pipelines | selectattr('flows', 'defined') | selectattr('flows') | list %}
         <tr class="flow-row"
           data-nombre="{{ flow.name | lower }}"
           data-archivo="{{ flow.file | lower }}"
-          data-estado="{{ 'activo' if flow.enabled else 'inactivo' }}"
-          data-tipo="{{ 'schedule' if flow.schedules else 'dependencia' }}">
+          data-estado="{{ 'activo' if flow.enabled else 'inactivo' }}">
           <td class="fw-semibold">{{ flow.name }}</td>
           <td class="text-muted small font-monospace" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
               title="{{ flow.file }}">{{ flow.file }}</td>
           <td>
-            {% if flow.schedules %}
-              {% for s in flow.schedules %}
-                <code class="d-block">{{ s }}</code>
+            {% set mis_pipelines = [] %}
+            {% for p in pipelines %}
+              {% for step in p.flows %}
+                {% if step.flow == flow.name %}
+                  {% set _ = mis_pipelines.append(p.name) %}
+                {% endif %}
+              {% endfor %}
+            {% endfor %}
+            {% if mis_pipelines %}
+              {% for pname in mis_pipelines %}
+                <a href="/grafo?pipeline={{ pname | urlencode }}"
+                   class="badge bg-primary text-decoration-none me-1">{{ pname }}</a>
               {% endfor %}
             {% else %}
-              <span class="text-muted small fst-italic">por dependencia</span>
-            {% endif %}
-            {% if flow.depends_on %}
-              <div class="small text-muted mt-1">
-                ← {{ flow.depends_on | join(', ') }}
-              </div>
+              <span class="text-muted small fst-italic">ninguno</span>
             {% endif %}
           </td>
           <td>
@@ -215,11 +213,13 @@
               <span class="badge bg-secondary rounded-pill">Inactivo</span>
             {% endif %}
           </td>
-          <td class="text-muted small">{{ jobs.get(flow.name, '—') }}</td>
+          <td class="text-muted small">
+            {% if flow.reintentos %}{{ flow.reintentos }} × {{ flow.reintento_espera_min }}min{% else %}—{% endif %}
+          </td>
           <td>
             <div class="d-flex gap-1">
               <form action="/api/flows/{{ flow.name }}/ejecutar" method="post">
-                <button class="btn btn-sm btn-outline-primary" title="Ejecutar ahora">
+                <button class="btn btn-sm btn-outline-primary" title="Ejecutar ahora (sin pipeline)">
                   <i class="bi bi-play-fill"></i>
                 </button>
               </form>
@@ -248,11 +248,11 @@
   <div class="card-body">
     <div class="text-center text-muted py-5">
       <i class="bi bi-calendar-x fs-2 d-block mb-2"></i>
-      No hay flows programados. Seleccioná uno desde "Flows en disco" o usá "+ Nuevo manual".
+      No hay flows registrados. Seleccioná uno desde "Flows en disco" o usá "+ Nuevo".
     </div>
   </div>
   {% endif %}
-  </div><!-- /seccion-programados -->
+  </div>
 </div>
 
 
@@ -271,46 +271,13 @@
             <label class="form-label fw-semibold">Nombre <span class="text-danger">*</span></label>
             <input type="text" name="name" id="inputNombre" class="form-control"
               required placeholder="ventas_diarias">
-            <div class="form-text">Sin espacios. Identificador único del flow.</div>
+            <div class="form-text">Identificador único del flow.</div>
           </div>
 
           <div class="mb-3">
             <label class="form-label fw-semibold">Archivo .tfl / .tflx <span class="text-danger">*</span></label>
             <input type="text" name="file" id="inputArchivo" class="form-control font-monospace"
               required placeholder="C:\ruta\al\flow.tfl">
-          </div>
-
-          <div class="mb-3">
-            <label class="form-label fw-semibold">Disparadores por tiempo</label>
-            <div id="listaSchedules"></div>
-            <button type="button" class="btn btn-sm btn-outline-secondary mt-1"
-              onclick="agregarSchedule('')">
-              <i class="bi bi-plus-lg me-1"></i>Agregar horario
-            </button>
-            <div class="form-text mt-1">
-              Formato cron: <code>minuto hora día mes día_sem</code> —
-              <code>0 6 * * *</code> diario a las 6 |
-              <code>*/5 * * * *</code> cada 5 min.
-              Podés agregar varios. Dejá vacío si solo se dispara por dependencia.
-            </div>
-          </div>
-
-          <div class="mb-3">
-            <label class="form-label fw-semibold">Depende de <span class="text-muted fw-normal">(opcional)</span></label>
-            {% if todos_nombres %}
-            <div class="border rounded p-2" style="max-height:130px;overflow-y:auto;background:#f8f9fa">
-              {% for nombre_flow in todos_nombres %}
-              <div class="form-check dep-row" data-nombre="{{ nombre_flow }}">
-                <input class="form-check-input dep-check" type="checkbox"
-                  name="depends_on" value="{{ nombre_flow }}" id="dep_{{ nombre_flow }}">
-                <label class="form-check-label small" for="dep_{{ nombre_flow }}">{{ nombre_flow }}</label>
-              </div>
-              {% endfor %}
-            </div>
-            <div class="form-text">Se disparará cuando todos los seleccionados completen exitosamente.</div>
-            {% else %}
-            <div class="text-muted small fst-italic">No hay otros flows configurados aún.</div>
-            {% endif %}
           </div>
 
           <div class="mb-3">
@@ -342,6 +309,11 @@
             <label class="form-check-label" for="inputEnabled">Habilitado</label>
           </div>
 
+          <div class="alert alert-info mt-3 mb-0 small py-2">
+            <i class="bi bi-info-circle me-1"></i>
+            Los schedules y dependencias se configuran en <a href="/pipelines" class="alert-link">Pipelines</a>.
+          </div>
+
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
@@ -358,7 +330,6 @@
 const modal = new bootstrap.Modal(document.getElementById('modalFlow'));
 const form  = document.getElementById('formFlow');
 
-// ── Secciones colapsables ─────────────────────────────────────────────────
 const SECCIONES = ['carpetas', 'disco', 'programados'];
 
 function toggleSeccion(id) {
@@ -371,7 +342,6 @@ function toggleSeccion(id) {
   localStorage.setItem('flows-seccion-' + id, colapsado ? 'abierto' : 'cerrado');
 }
 
-// Restaurar estado guardado al cargar
 SECCIONES.forEach(id => {
   const estado = localStorage.getItem('flows-seccion-' + id);
   if (estado === 'cerrado') {
@@ -385,15 +355,13 @@ SECCIONES.forEach(id => {
 function filtrarFlows() {
   const texto  = document.getElementById('filtroTexto').value.toLowerCase();
   const estado = document.getElementById('filtroEstado').value;
-  const tipo   = document.getElementById('filtroTipo').value;
   const filas  = document.querySelectorAll('.flow-row');
   let visibles = 0;
 
   filas.forEach(fila => {
     const ok =
       (!texto  || fila.dataset.nombre.includes(texto) || fila.dataset.archivo.includes(texto)) &&
-      (!estado || fila.dataset.estado === estado) &&
-      (!tipo   || fila.dataset.tipo === tipo);
+      (!estado || fila.dataset.estado === estado);
     fila.style.display = ok ? '' : 'none';
     if (ok) visibles++;
   });
@@ -408,42 +376,7 @@ function filtrarFlows() {
 function limpiarFiltros() {
   document.getElementById('filtroTexto').value = '';
   document.getElementById('filtroEstado').value = '';
-  document.getElementById('filtroTipo').value = '';
   filtrarFlows();
-}
-
-function agregarSchedule(valor) {
-  const lista = document.getElementById('listaSchedules');
-  const div = document.createElement('div');
-  div.className = 'input-group mb-2 schedule-row';
-  div.innerHTML = `
-    <input type="text" name="schedules" class="form-control font-monospace"
-      placeholder="0 6 * * *" value="${valor || ''}">
-    <button type="button" class="btn btn-outline-danger"
-      onclick="this.closest('.schedule-row').remove()">
-      <i class="bi bi-x-lg"></i>
-    </button>
-  `;
-  lista.appendChild(div);
-  div.querySelector('input').focus();
-}
-
-function setSchedules(schedules) {
-  document.getElementById('listaSchedules').innerHTML = '';
-  (schedules || []).forEach(s => agregarSchedule(s));
-}
-
-function _setDeps(deps, selfName) {
-  document.querySelectorAll('.dep-row').forEach(row => {
-    const nombre = row.dataset.nombre;
-    if (selfName && nombre === selfName) {
-      row.style.display = 'none';
-      row.querySelector('.dep-check').checked = false;
-    } else {
-      row.style.display = '';
-      row.querySelector('.dep-check').checked = Array.isArray(deps) && deps.includes(nombre);
-    }
-  });
 }
 
 function abrirModalNuevo() {
@@ -454,8 +387,6 @@ function abrirModalNuevo() {
   document.getElementById('inputEnabled').checked = true;
   document.getElementById('inputReintentos').value  = 0;
   document.getElementById('inputReintEspera').value = 5;
-  setSchedules([]);
-  _setDeps([], null);
   modal.show();
 }
 
@@ -469,23 +400,18 @@ function abrirModalEditar(flow) {
   document.getElementById('inputEnabled').checked    = flow.enabled;
   document.getElementById('inputReintentos').value   = flow.reintentos          ?? 0;
   document.getElementById('inputReintEspera').value  = flow.reintento_espera_min ?? 5;
-  setSchedules(flow.schedules || []);
-  _setDeps(flow.depends_on, flow.name);
   modal.show();
 }
 
 function programarDescubierto(tfl) {
-  document.getElementById('modalTitulo').textContent = 'Programar: ' + tfl.nombre;
-  document.getElementById('btnGuardar').textContent = 'Programar';
+  document.getElementById('modalTitulo').textContent = 'Registrar: ' + tfl.nombre;
+  document.getElementById('btnGuardar').textContent = 'Registrar';
   form.action = '/api/flows';
   form.reset();
   document.getElementById('inputNombre').value    = tfl.nombre;
   document.getElementById('inputArchivo').value   = tfl.path;
   document.getElementById('inputEnabled').checked = true;
-  setSchedules([]);
-  _setDeps([], null);
   modal.show();
-  setTimeout(() => document.getElementById('listaSchedules').closest('.mb-3').querySelector('button').click(), 400);
 }
 </script>
 {% endblock %}

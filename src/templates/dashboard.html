@@ -10,9 +10,9 @@
 <div class="row g-3 mb-4">
   <div class="col-sm-4">
     <div class="stat-card" style="background: linear-gradient(135deg,#0f3460,#16213e)">
-      <div class="small opacity-75 mb-1"><i class="bi bi-play-circle me-1"></i>Flows configurados</div>
-      <div class="fs-2 fw-bold">{{ flows | length }}</div>
-      <div class="small opacity-60">{{ flows | selectattr("enabled") | list | length }} activos</div>
+      <div class="small opacity-75 mb-1"><i class="bi bi-play-circle me-1"></i>Flows / Pipelines</div>
+      <div class="fs-2 fw-bold">{{ flows | length }} / {{ pipelines | length }}</div>
+      <div class="small opacity-60">{{ flows | selectattr("enabled") | list | length }} flows activos</div>
     </div>
   </div>
   <div class="col-sm-4">
@@ -31,21 +31,21 @@
   </div>
 </div>
 
-<!-- Próximos disparos -->
+<!-- Próximos disparos (por pipeline) -->
 {% if jobs %}
 <div class="card mb-4">
   <div class="card-header py-2">Próximos disparos</div>
   <div class="card-body p-0">
     <table class="table mb-0">
-      <thead><tr><th>Flow</th><th>Próxima ejecución</th><th></th></tr></thead>
+      <thead><tr><th>Pipeline</th><th>Próxima ejecución</th><th></th></tr></thead>
       <tbody>
-        {% for flow in flows %}
-          {% if flow.name in jobs %}
+        {% for pipeline in pipelines %}
+          {% if pipeline.name in jobs %}
           <tr>
-            <td><i class="bi bi-play-circle-fill text-primary me-1"></i>{{ flow.name }}</td>
-            <td class="text-muted">{{ jobs[flow.name] }}</td>
+            <td><i class="bi bi-diagram-2 text-primary me-1"></i>{{ pipeline.name }}</td>
+            <td class="text-muted">{{ jobs[pipeline.name] }}</td>
             <td>
-              <form action="/api/flows/{{ flow.name }}/ejecutar" method="post" class="d-inline">
+              <form action="/api/pipelines/{{ pipeline.name }}/ejecutar" method="post" class="d-inline">
                 <button class="btn btn-sm btn-outline-primary py-0">
                   <i class="bi bi-lightning-charge"></i> Ejecutar ahora
                 </button>
