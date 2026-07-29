@@ -38,7 +38,7 @@
             <span class="badge bg-light text-dark border">{{ pipeline.flows | length }} flow(s)</span>
             <div class="small text-muted mt-1" style="max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
               {% for step in pipeline.flows %}
-                {{ step.flow }}{% if not loop.last %} → {% endif %}
+                {{ step.flow }}{% if not loop.last %}, {% endif %}
               {% endfor %}
             </div>
           </td>
@@ -125,20 +125,24 @@
             <div id="listaDisponibles" style="max-height:320px;overflow-y:auto"></div>
           </div>
 
-          <!-- ── Columna derecha: etapas ── -->
+          <!-- ── Columna derecha: tabla de flows con disparadores ── -->
           <div class="col-9 ps-3">
-            <div class="d-flex justify-content-between align-items-center mb-2">
-              <div class="fw-semibold small text-muted text-uppercase" style="letter-spacing:.5px">
-                Secuencia de ejecución
-              </div>
-              <button class="btn btn-sm btn-outline-primary py-0" onclick="nuevaEtapa()">
-                <i class="bi bi-plus-lg me-1"></i>Nueva etapa
-              </button>
+            <div class="fw-semibold small text-muted text-uppercase mb-2" style="letter-spacing:.5px">
+              Flows en el pipeline
             </div>
-            <div id="listaEtapas" style="max-height:340px;overflow-y:auto;padding-right:4px"></div>
-            <div id="sinEtapas" class="text-center text-muted py-4 small fst-italic">
-              Seleccioná flows de la izquierda para armar la secuencia.
+            <div id="sinFlows" class="text-center text-muted py-4 small fst-italic">
+              Seleccioná flows de la izquierda para agregar al pipeline.
             </div>
+            <table class="table table-sm mb-0" id="tablaFlows" style="display:none">
+              <thead>
+                <tr>
+                  <th style="width:38%">Flow</th>
+                  <th>Corre cuando</th>
+                  <th style="width:28px"></th>
+                </tr>
+              </thead>
+              <tbody id="tbodyFlows"></tbody>
+            </table>
           </div>
 
         </div>
@@ -151,68 +155,217 @@
   </div>
 </div>
 
-<!-- Popup selector de etapa (posicionado dinámicamente) -->
-<div id="popupEtapa" class="card shadow" style="position:fixed;z-index:2000;min-width:200px;display:none">
+<!-- Dropdown para seleccionar dependencia -->
+<div id="dropDeps" class="card shadow border" style="position:fixed;z-index:2100;min-width:260px;display:none">
   <div class="card-body p-2">
-    <div class="small fw-semibold mb-2" id="popupFlowNombre"></div>
-    <div id="popupOpciones" class="d-grid gap-1"></div>
+    <div class="small text-muted mb-1 px-1">Corre después de…</div>
+    <input type="search" id="buscarDep" class="form-control form-control-sm mb-1"
+      placeholder="Buscar flow..." oninput="filtrarDropDeps()">
+    <div id="listaDeps" style="max-height:220px;overflow-y:auto"></div>
   </div>
 </div>
 
 {% endblock %}
 {% block scripts %}
 <script>
-const modal       = new bootstrap.Modal(document.getElementById('modalPipeline'));
-const todosFlows  = {{ flows | map(attribute='name') | list | tojson }};
+const modal      = new bootstrap.Modal(document.getElementById('modalPipeline'));
+const todosFlows = {{ flows | map(attribute='name') | list | tojson }};
 
-// Estado principal: array de arrays (etapas)
-let etapas   = [];        // [ ["flow_A", "flow_B"], ["flow_C"], ... ]
-let modoEdicion = null;   // nombre del pipeline en edición, o null
-let flowPendiente = null; // flow esperando ser asignado a una etapa
+// Estado: array de { flow: string, depends_on: string[] }
+let pipelineFlows = [];
+let modoEdicion   = null;
+let dropTargetFlow = null;
 
-// ── Conversiones ─────────────────────────────────────────────────────────────
+// ── Flows en el pipeline ──────────────────────────────────────────────────────
 
-function etapasToPipelineFlows() {
-  const result = [];
-  etapas.forEach((stage, idx) => {
-    const deps = idx > 0 ? [...etapas[idx - 1]] : [];
-    stage.forEach(nombre => result.push({ flow: nombre, depends_on: deps }));
+function flowsEnPipeline() {
+  return pipelineFlows.map(s => s.flow);
+}
+
+function agregarFlow(nombre) {
+  if (pipelineFlows.find(s => s.flow === nombre)) return;
+  pipelineFlows.push({ flow: nombre, depends_on: [] });
+  renderTodo();
+}
+
+function quitarFlow(nombre) {
+  pipelineFlows = pipelineFlows.filter(s => s.flow !== nombre);
+  // Limpiar referencias en depends_on de otros flows
+  pipelineFlows.forEach(s => {
+    s.depends_on = s.depends_on.filter(d => d !== nombre);
   });
-  return result;
+  renderTodo();
 }
 
-function pipelineFlowsToEtapas(pipelineFlows) {
-  if (!pipelineFlows || !pipelineFlows.length) return [];
-  const levels = {};
-  pipelineFlows.forEach(s => levels[s.flow] = 0);
+function agregarDep(flowNombre, dep) {
+  const step = pipelineFlows.find(s => s.flow === flowNombre);
+  if (!step || step.depends_on.includes(dep)) return;
+  step.depends_on.push(dep);
+  renderTodo();
+}
 
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const step of pipelineFlows) {
-      const depLvls = (step.depends_on || []).map(d => levels[d] ?? 0);
-      const lvl = depLvls.length === 0 ? 0 : Math.max(...depLvls) + 1;
-      if (lvl !== levels[step.flow]) { levels[step.flow] = lvl; changed = true; }
+function quitarDep(flowNombre, dep) {
+  const step = pipelineFlows.find(s => s.flow === flowNombre);
+  if (!step) return;
+  step.depends_on = step.depends_on.filter(d => d !== dep);
+  renderTodo();
+}
+
+// ── Render tabla ──────────────────────────────────────────────────────────────
+
+function renderTabla() {
+  const tbody    = document.getElementById('tbodyFlows');
+  const tabla    = document.getElementById('tablaFlows');
+  const sinFlows = document.getElementById('sinFlows');
+  tbody.innerHTML = '';
+
+  if (!pipelineFlows.length) {
+    tabla.style.display = 'none';
+    sinFlows.style.display = '';
+    return;
+  }
+  tabla.style.display = '';
+  sinFlows.style.display = 'none';
+
+  pipelineFlows.forEach(step => {
+    const tr = document.createElement('tr');
+
+    // Celda: nombre del flow
+    const tdFlow = document.createElement('td');
+    tdFlow.style.cssText = 'max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.82rem;font-family:monospace;vertical-align:middle';
+    tdFlow.title = step.flow;
+    tdFlow.textContent = step.flow;
+    tr.appendChild(tdFlow);
+
+    // Celda: disparadores
+    const tdCorre = document.createElement('td');
+    tdCorre.style.cssText = 'font-size:.8rem;vertical-align:middle';
+
+    if (step.depends_on.length === 0) {
+      const badge = document.createElement('span');
+      badge.className = 'badge bg-light text-secondary border me-1';
+      badge.style.fontSize = '.75rem';
+      badge.textContent = 'inicio del pipeline';
+      tdCorre.appendChild(badge);
+    } else {
+      step.depends_on.forEach(dep => {
+        const badge = document.createElement('span');
+        badge.className = 'badge bg-primary d-inline-flex align-items-center gap-1 me-1 mb-1';
+        badge.style.fontSize = '.75rem';
+
+        const arrow = document.createTextNode('→ ');
+        badge.appendChild(arrow);
+
+        const depSpan = document.createElement('span');
+        depSpan.className = 'text-truncate';
+        depSpan.style.maxWidth = '130px';
+        depSpan.title = dep;
+        depSpan.textContent = dep;
+        badge.appendChild(depSpan);
+
+        const btnClose = document.createElement('button');
+        btnClose.type = 'button';
+        btnClose.className = 'btn-close btn-close-white ms-1';
+        btnClose.style.cssText = 'font-size:.45rem;width:.5rem;height:.5rem';
+        btnClose.onclick = () => quitarDep(step.flow, dep);
+        badge.appendChild(btnClose);
+
+        tdCorre.appendChild(badge);
+      });
     }
-  }
 
-  const maxLvl = Math.max(...Object.values(levels));
-  const result = [];
-  for (let i = 0; i <= maxLvl; i++) {
-    const stage = pipelineFlows.filter(s => levels[s.flow] === i).map(s => s.flow);
-    if (stage.length) result.push(stage);
-  }
-  return result;
+    // Botón "+" para agregar dep
+    const btnAdd = document.createElement('button');
+    btnAdd.type = 'button';
+    btnAdd.className = 'btn btn-sm btn-link py-0 px-1 text-muted align-middle';
+    btnAdd.title = 'Agregar disparador';
+    btnAdd.innerHTML = '<i class="bi bi-plus-circle" style="font-size:.82rem"></i>';
+    btnAdd.onclick = e => abrirDropDeps(step.flow, e);
+    tdCorre.appendChild(btnAdd);
+
+    tr.appendChild(tdCorre);
+
+    // Celda: quitar flow
+    const tdDel = document.createElement('td');
+    tdDel.style.verticalAlign = 'middle';
+    const btnDel = document.createElement('button');
+    btnDel.type = 'button';
+    btnDel.className = 'btn btn-sm btn-link text-danger p-0';
+    btnDel.title = 'Quitar del pipeline';
+    btnDel.innerHTML = '<i class="bi bi-x-lg" style="font-size:.8rem"></i>';
+    btnDel.onclick = () => quitarFlow(step.flow);
+    tdDel.appendChild(btnDel);
+    tr.appendChild(tdDel);
+
+    tbody.appendChild(tr);
+  });
 }
 
-// ── Flows disponibles ─────────────────────────────────────────────────────────
+// ── Dropdown agregar dependencia ──────────────────────────────────────────────
 
-function flowsEnUso() {
-  return new Set(etapas.flat());
+function abrirDropDeps(flowNombre, event) {
+  event.stopPropagation();
+  dropTargetFlow = flowNombre;
+  document.getElementById('buscarDep').value = '';
+  renderDropDeps();
+
+  const drop = document.getElementById('dropDeps');
+  drop.style.display = 'block';
+  const rect = event.target.closest('button').getBoundingClientRect();
+  let left = rect.left;
+  let top  = rect.bottom + 4;
+  if (left + 270 > window.innerWidth)  left = window.innerWidth - 274;
+  if (top  + 320 > window.innerHeight) top  = rect.top - 324;
+  drop.style.left = left + 'px';
+  drop.style.top  = top  + 'px';
+  setTimeout(() => document.getElementById('buscarDep').focus(), 50);
 }
+
+function renderDropDeps() {
+  if (!dropTargetFlow) return;
+  const step   = pipelineFlows.find(s => s.flow === dropTargetFlow);
+  const buscar = document.getElementById('buscarDep').value.toLowerCase();
+  const lista  = document.getElementById('listaDeps');
+  lista.innerHTML = '';
+
+  const candidatos = pipelineFlows.filter(s =>
+    s.flow !== dropTargetFlow &&
+    !step.depends_on.includes(s.flow) &&
+    s.flow.toLowerCase().includes(buscar)
+  );
+
+  if (!candidatos.length) {
+    lista.innerHTML = '<div class="text-muted small px-2 py-1 fst-italic">Sin opciones.</div>';
+    return;
+  }
+
+  candidatos.forEach(s => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-sm btn-link text-start w-100 py-1 px-2 text-dark text-decoration-none';
+    btn.style.fontSize = '.82rem';
+    btn.style.fontFamily = 'monospace';
+    btn.textContent = s.flow;
+    btn.onclick = () => { agregarDep(dropTargetFlow, s.flow); cerrarDropDeps(); };
+    lista.appendChild(btn);
+  });
+}
+
+function filtrarDropDeps() { renderDropDeps(); }
+
+function cerrarDropDeps() {
+  document.getElementById('dropDeps').style.display = 'none';
+  dropTargetFlow = null;
+}
+
+document.addEventListener('click', e => {
+  if (!e.target.closest('#dropDeps')) cerrarDropDeps();
+});
+
+// ── Flows disponibles (panel izquierdo) ───────────────────────────────────────
 
 function renderDisponibles() {
-  const enUso = flowsEnUso();
+  const enUso  = new Set(flowsEnPipeline());
   const buscar = document.getElementById('buscarFlow').value.toLowerCase();
   const container = document.getElementById('listaDisponibles');
   container.innerHTML = '';
@@ -226,173 +379,34 @@ function renderDisponibles() {
 
   disponibles.forEach(nombre => {
     const div = document.createElement('div');
-    div.className = 'flow-disp d-flex justify-content-between align-items-center px-2 py-1 rounded mb-1';
-    div.style.cssText = 'background:#f8f9fa;font-size:.85rem;cursor:default';
-    div.innerHTML = `
-      <span class="text-truncate me-1" title="${nombre}">${nombre}</span>
-      <button class="btn btn-sm btn-link py-0 px-1 text-primary flex-shrink-0"
-        title="Agregar al pipeline"
-        onclick="abrirPopup('${nombre}', event)">
-        <i class="bi bi-plus-lg"></i>
-      </button>
-    `;
+    div.className = 'd-flex justify-content-between align-items-center px-2 py-1 rounded mb-1';
+    div.style.cssText = 'background:#f8f9fa';
+
+    const span = document.createElement('span');
+    span.className = 'text-truncate me-1';
+    span.title = nombre;
+    span.style.cssText = 'font-size:.8rem;font-family:monospace';
+    span.textContent = nombre;
+
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-sm btn-link py-0 px-1 text-primary flex-shrink-0';
+    btn.title = 'Agregar al pipeline';
+    btn.innerHTML = '<i class="bi bi-plus-lg"></i>';
+    btn.onclick = () => agregarFlow(nombre);
+
+    div.appendChild(span);
+    div.appendChild(btn);
     container.appendChild(div);
   });
 }
 
 function filtrarDisp() { renderDisponibles(); }
 
-// ── Popup selector de etapa ──────────────────────────────────────────────────
-
-function abrirPopup(nombre, event) {
-  event.stopPropagation();
-  flowPendiente = nombre;
-
-  document.getElementById('popupFlowNombre').textContent = nombre;
-  const opciones = document.getElementById('popupOpciones');
-  opciones.innerHTML = '';
-
-  etapas.forEach((stage, idx) => {
-    const btn = document.createElement('button');
-    btn.className = 'btn btn-sm btn-outline-secondary text-start';
-    btn.style.fontSize = '.8rem';
-    btn.innerHTML = `<i class="bi bi-collection me-1"></i>Etapa ${idx + 1} <span class="text-muted">(${stage.slice(0,2).join(', ')}${stage.length > 2 ? '…' : ''})</span>`;
-    btn.onclick = () => { agregarAEtapa(idx); cerrarPopup(); };
-    opciones.appendChild(btn);
-  });
-
-  const btnNueva = document.createElement('button');
-  btnNueva.className = 'btn btn-sm btn-primary text-start';
-  btnNueva.style.fontSize = '.8rem';
-  btnNueva.innerHTML = '<i class="bi bi-plus-lg me-1"></i>Nueva etapa al final';
-  btnNueva.onclick = () => { nuevaEtapaConFlow(nombre); cerrarPopup(); };
-  opciones.appendChild(btnNueva);
-
-  // Posicionar popup
-  const popup = document.getElementById('popupEtapa');
-  popup.style.display = 'block';
-  const rect = event.target.closest('button').getBoundingClientRect();
-  const popupW = 220;
-  let left = rect.right + 6;
-  if (left + popupW > window.innerWidth) left = rect.left - popupW - 6;
-  popup.style.left = left + 'px';
-  popup.style.top = Math.min(rect.top, window.innerHeight - 300) + 'px';
-}
-
-function cerrarPopup() {
-  document.getElementById('popupEtapa').style.display = 'none';
-  flowPendiente = null;
-}
-
-document.addEventListener('click', e => {
-  if (!e.target.closest('#popupEtapa') && !e.target.closest('.flow-disp')) cerrarPopup();
-});
-
-// ── Manipulación de etapas ────────────────────────────────────────────────────
-
-function agregarAEtapa(idx) {
-  if (flowPendiente === null) return;
-  etapas[idx].push(flowPendiente);
-  renderTodo();
-}
-
-function nuevaEtapa() {
-  etapas.push([]);
-  renderTodo();
-}
-
-function nuevaEtapaConFlow(nombre) {
-  etapas.push([nombre]);
-  renderTodo();
-}
-
-function quitarFlow(etapaIdx, nombre) {
-  etapas[etapaIdx] = etapas[etapaIdx].filter(f => f !== nombre);
-  if (etapas[etapaIdx].length === 0) etapas.splice(etapaIdx, 1);
-  renderTodo();
-}
-
-function moverEtapa(idx, dir) {
-  const nuevoIdx = idx + dir;
-  if (nuevoIdx < 0 || nuevoIdx >= etapas.length) return;
-  [etapas[idx], etapas[nuevoIdx]] = [etapas[nuevoIdx], etapas[idx]];
-  renderTodo();
-}
-
-// ── Render etapas ─────────────────────────────────────────────────────────────
+// ── Render total ──────────────────────────────────────────────────────────────
 
 function renderTodo() {
-  renderEtapas();
+  renderTabla();
   renderDisponibles();
-}
-
-function renderEtapas() {
-  const container = document.getElementById('listaEtapas');
-  const sinEtapas = document.getElementById('sinEtapas');
-  container.innerHTML = '';
-
-  if (!etapas.length) {
-    sinEtapas.style.display = '';
-    return;
-  }
-  sinEtapas.style.display = 'none';
-
-  etapas.forEach((stage, idx) => {
-    // Fila de etapa
-    const row = document.createElement('div');
-    row.className = 'etapa-row d-flex align-items-start gap-2 mb-1';
-
-    // Controles laterales (número + flechas)
-    const ctrl = document.createElement('div');
-    ctrl.className = 'd-flex flex-column align-items-center gap-0 flex-shrink-0';
-    ctrl.style.minWidth = '52px';
-    ctrl.innerHTML = `
-      <span class="badge bg-secondary mb-1" style="font-size:.7rem">Etapa ${idx + 1}</span>
-      <button class="btn btn-link btn-sm p-0 text-muted lh-1" ${idx === 0 ? 'disabled' : ''}
-        onclick="moverEtapa(${idx}, -1)" title="Subir etapa">
-        <i class="bi bi-chevron-up"></i>
-      </button>
-      <button class="btn btn-link btn-sm p-0 text-muted lh-1" ${idx === etapas.length - 1 ? 'disabled' : ''}
-        onclick="moverEtapa(${idx}, 1)" title="Bajar etapa">
-        <i class="bi bi-chevron-down"></i>
-      </button>
-    `;
-    row.appendChild(ctrl);
-
-    // Área de flows
-    const flowsArea = document.createElement('div');
-    flowsArea.className = 'flex-grow-1 border rounded p-2 d-flex flex-wrap gap-1 align-items-center';
-    flowsArea.style.minHeight = '38px';
-
-    if (stage.length === 0) {
-      flowsArea.innerHTML = '<span class="text-muted small fst-italic">Etapa vacía — se eliminará al guardar</span>';
-    } else {
-      stage.forEach(nombre => {
-        const chip = document.createElement('span');
-        chip.className = 'badge bg-primary d-inline-flex align-items-center gap-1';
-        chip.style.fontSize = '.8rem';
-        chip.innerHTML = `
-          <span class="text-truncate" style="max-width:180px" title="${nombre}">${nombre}</span>
-          <button type="button" class="btn-close btn-close-white ms-1"
-            style="font-size:.55rem;width:.6rem;height:.6rem"
-            onclick="quitarFlow(${idx}, '${nombre}')"></button>
-        `;
-        flowsArea.appendChild(chip);
-      });
-    }
-
-    row.appendChild(flowsArea);
-    container.appendChild(row);
-
-    // Flecha entre etapas
-    if (idx < etapas.length - 1) {
-      const arrow = document.createElement('div');
-      arrow.className = 'text-center text-muted mb-1';
-      arrow.style.fontSize = '.85rem';
-      arrow.innerHTML = '<i class="bi bi-arrow-down"></i>';
-      container.appendChild(arrow);
-    }
-  });
 }
 
 // ── Schedules ─────────────────────────────────────────────────────────────────
@@ -403,7 +417,7 @@ function agregarSchedule(valor) {
   div.className = 'input-group mb-2 schedule-row';
   div.innerHTML = `
     <input type="text" class="form-control font-monospace schedule-input"
-      placeholder="0 6 * * *" value="${valor || ''}">
+      placeholder="0 6 * * *" value="${escHtml(valor || '')}">
     <button type="button" class="btn btn-outline-danger"
       onclick="this.closest('.schedule-row').remove()">
       <i class="bi bi-x-lg"></i>
@@ -423,7 +437,7 @@ function setSchedules(schedules) {
 function resetModal() {
   document.getElementById('inputNombre').value = '';
   setSchedules([]);
-  etapas = [];
+  pipelineFlows = [];
   document.getElementById('buscarFlow').value = '';
   renderTodo();
 }
@@ -445,7 +459,10 @@ function abrirModalEditar(pipeline) {
   document.getElementById('inputNombre').value = pipeline.name;
   setSchedules(pipeline.schedules || []);
   document.getElementById('buscarFlow').value = '';
-  etapas = pipelineFlowsToEtapas(pipeline.flows || []);
+  pipelineFlows = (pipeline.flows || []).map(s => ({
+    flow: s.flow,
+    depends_on: [...(s.depends_on || [])],
+  }));
   renderTodo();
   modal.show();
 }
@@ -459,16 +476,9 @@ async function guardarPipeline() {
   const schedules = [...document.querySelectorAll('.schedule-input')]
     .map(i => i.value.trim()).filter(Boolean);
 
-  // Limpiar etapas vacías
-  const etapasFiltradas = etapas.filter(s => s.length > 0);
+  if (!pipelineFlows.length) { alert('El pipeline debe tener al menos un flow.'); return; }
 
-  if (!etapasFiltradas.length) { alert('El pipeline debe tener al menos un flow.'); return; }
-
-  const data = {
-    name: nombre,
-    schedules,
-    flows: etapasToPipelineFlows(),
-  };
+  const data = { name: nombre, schedules, flows: pipelineFlows };
 
   const url = modoEdicion
     ? `/api/pipelines/${encodeURIComponent(modoEdicion)}/editar`
@@ -493,6 +503,12 @@ async function guardarPipeline() {
     btn.disabled = false;
     btn.innerHTML = modoEdicion ? 'Guardar cambios' : 'Crear';
   }
+}
+
+// ── Utilidades ────────────────────────────────────────────────────────────────
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 </script>
 {% endblock %}
