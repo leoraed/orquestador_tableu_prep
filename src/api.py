@@ -528,6 +528,21 @@ def api_ejecuciones(limit: int = 50, db: Session = Depends(get_db)):
     return db.query(EjecucionFlow).order_by(EjecucionFlow.inicio.desc()).limit(limit).all()
 
 
+@app.get("/api/ejecuciones/{eid}")
+def api_ejecucion_detalle(eid: int, db: Session = Depends(get_db)):
+    ej = db.query(EjecucionFlow).filter(EjecucionFlow.id == eid).first()
+    if not ej:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="No encontrada")
+    return {
+        "id": ej.id,
+        "nombre_flow": ej.nombre_flow,
+        "salida": ej.salida,
+        "error": ej.error,
+        "estado": ej.estado,
+    }
+
+
 @app.get("/health")
 def health():
     return {"estado": "ok", "timestamp": datetime.utcnow().isoformat()}
