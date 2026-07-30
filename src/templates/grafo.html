@@ -9,7 +9,7 @@
     <span><span class="badge" style="background:#dc3545">&nbsp;</span> Fallido</span>
     <span><span class="badge" style="background:#fd7e14">&nbsp;</span> En proceso</span>
     <span><span class="badge" style="background:#6c757d">&nbsp;</span> Cancelado / Inactivo</span>
-    <span class="ms-2 border-start ps-3">○ corrió hoy &nbsp;|&nbsp; ● desactualizado</span>
+    <span class="ms-2 border-start ps-3">○ corrió hoy &nbsp;|&nbsp; ● desactualizado &nbsp;|&nbsp; <span style="background:#6ea8fe;border-radius:3px;padding:0 4px;font-size:.75rem">&nbsp;</span> Task</span>
   </div>
 </div>
 
@@ -42,14 +42,15 @@
   </div>
 </div>
 
-{% if not flows %}
+{% set todos_los_nodos = flows + (tasks if tasks is defined else []) %}
+{% if not todos_los_nodos %}
 <div class="card">
   <div class="text-center text-muted py-5">
     <i class="bi bi-diagram-3 fs-2 d-block mb-2"></i>
     {% if pipeline_seleccionado %}
-      El pipeline "{{ pipeline_seleccionado }}" no tiene flows asignados.
+      El pipeline "{{ pipeline_seleccionado }}" no tiene flows ni tasks asignados.
     {% else %}
-      No hay flows configurados aún.
+      No hay flows ni tasks configurados aún.
     {% endif %}
   </div>
 </div>
@@ -136,18 +137,29 @@
 {% endblock %}
 
 {% block scripts %}
-{% if flows %}
+{% if todos_los_nodos %}
 <link href="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.css" rel="stylesheet">
 <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
 <script>
 const flows           = {{ flows | tojson }};
+const tasks           = {{ (tasks if tasks is defined else []) | tojson }};
+const todosLosNodos   = flows.concat(tasks.map(t => ({...t, _isTask: true})));
 const estadosInit     = {{ ultimos_estados | tojson }};
 const depsEnPipeline  = {{ deps_en_pipeline | tojson }};
 const pipelineActual  = {{ pipeline_seleccionado | tojson }};
 
 // ── Colores y etiquetas ───────────────────────────────────────────────────────
-function colorPorEstado(estado, enabled) {
+function colorPorEstado(estado, enabled, isTask) {
   if (!enabled) return { background: '#6c757d', border: '#495057' };
+  if (isTask) {
+    switch (estado) {
+      case 'exitoso':    return { background: '#0d6efd', border: '#0a58ca' };
+      case 'fallido':    return { background: '#dc3545', border: '#b02a37' };
+      case 'en_proceso': return { background: '#fd7e14', border: '#c96a00' };
+      case 'cancelado':  return { background: '#6c757d', border: '#495057' };
+      default:           return { background: '#6ea8fe', border: '#0d6efd' };
+    }
+  }
   switch (estado) {
     case 'exitoso':    return { background: '#198754', border: '#146c43' };
     case 'fallido':    return { background: '#dc3545', border: '#b02a37' };
@@ -157,10 +169,11 @@ function colorPorEstado(estado, enabled) {
   }
 }
 
-function etiquetaNodo(nombre, info) {
-  if (!info) return nombre;
+function etiquetaNodo(nombre, info, isTask) {
+  const prefix = isTask ? '⚡ ' : '';
+  if (!info) return prefix + nombre;
   const dot = info.es_hoy ? '○' : '●';
-  return `${dot} ${nombre}`;
+  return `${dot} ${prefix}${nombre}`;
 }
 
 function badgeEstado(estado) {
@@ -175,16 +188,18 @@ function badgeEstado(estado) {
 }
 
 // ── Dataset ──────────────────────────────────────────────────────────────────
-const nodesDS = new vis.DataSet(flows.map(f => {
+const nodesDS = new vis.DataSet(todosLosNodos.map(f => {
   const info = estadosInit[f.name] ?? null;
+  const isTask = !!f._isTask;
   return {
     id:    f.name,
-    label: etiquetaNodo(f.name, info),
-    color: { ...colorPorEstado(info?.estado ?? null, f.enabled), highlight: { background: '#fff', border: '#333' } },
+    label: etiquetaNodo(f.name, info, isTask),
+    color: { ...colorPorEstado(info?.estado ?? null, f.enabled, isTask), highlight: { background: '#fff', border: '#333' } },
     font:  { color: '#fff', size: 14, bold: true },
-    shape: 'box',
+    shape: isTask ? 'ellipse' : 'box',
     margin: 10,
     shadow: true,
+    _isTask: isTask,
   };
 }));
 
@@ -245,16 +260,23 @@ function reordenar() {
 
 // ── Detalle al hacer click ────────────────────────────────────────────────────
 let flowActivo = null;
+let flowActivoEsTask = false;
 
 network.on('click', params => {
   if (!params.nodes.length) return;
   const nombre = params.nodes[0];
-  const flow   = flows.find(f => f.name === nombre);
-  if (!flow) return;
+  const nodo   = todosLosNodos.find(f => f.name === nombre);
+  if (!nodo) return;
   flowActivo = nombre;
+  flowActivoEsTask = !!nodo._isTask;
 
-  document.getElementById('detalleNombre').textContent = flow.name;
-  document.getElementById('detalleArchivo').textContent = flow.file;
+  document.getElementById('detalleNombre').textContent = nodo.name;
+  if (flowActivoEsTask) {
+    document.getElementById('detalleArchivo').textContent =
+      `${nodo.type} — ${nodo.resource_type}: ${nodo.resource_name}`;
+  } else {
+    document.getElementById('detalleArchivo').textContent = nodo.file;
+  }
 
   const deps = depsEnPipeline[nombre] || [];
   document.getElementById('detalleDeps').innerHTML =
@@ -291,7 +313,10 @@ async function ejecutarFlow() {
     if (!confirm(`¿Ejecutar "${flowActivo}" ahora?`)) return;
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Iniciando...';
-    await fetch(`/api/flows/${encodeURIComponent(flowActivo)}/ejecutar`, { method: 'POST', redirect: 'manual' });
+    const endpoint = flowActivoEsTask
+      ? `/api/tasks/${encodeURIComponent(flowActivo)}/ejecutar`
+      : `/api/flows/${encodeURIComponent(flowActivo)}/ejecutar`;
+    await fetch(endpoint, { method: 'POST', redirect: 'manual' });
     _marcarEnProceso();
     btn.disabled = false;
     btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Ejecutar';
@@ -300,7 +325,10 @@ async function ejecutarFlow() {
 
 async function ejecutarSolo() {
   if (!flowActivo || !confirm(`¿Ejecutar solo "${flowActivo}" sin cascada?`)) return;
-  await fetch(`/api/flows/${encodeURIComponent(flowActivo)}/ejecutar`, { method: 'POST', redirect: 'manual' });
+  const endpoint = flowActivoEsTask
+    ? `/api/tasks/${encodeURIComponent(flowActivo)}/ejecutar`
+    : `/api/flows/${encodeURIComponent(flowActivo)}/ejecutar`;
+  await fetch(endpoint, { method: 'POST', redirect: 'manual' });
   _marcarEnProceso();
 }
 
@@ -312,13 +340,14 @@ function _marcarEnProceso() {
 
 // ── Actualizar colores desde API ──────────────────────────────────────────────
 function actualizarNodo(nombre, info) {
-  const flow = flows.find(f => f.name === nombre);
-  if (!flow) return;
+  const nodo = todosLosNodos.find(f => f.name === nombre);
+  if (!nodo) return;
+  const isTask = !!nodo._isTask;
   estadosInit[nombre] = info;
   nodesDS.update({
     id:    nombre,
-    label: etiquetaNodo(nombre, info),
-    color: { ...colorPorEstado(info?.estado ?? null, flow.enabled), highlight: { background: '#fff', border: '#333' } },
+    label: etiquetaNodo(nombre, info, isTask),
+    color: { ...colorPorEstado(info?.estado ?? null, nodo.enabled, isTask), highlight: { background: '#fff', border: '#333' } },
   });
 }
 
@@ -350,22 +379,23 @@ async function refrescarEstados() {
 
 // ── Editar dependencias desde el grafo (solo si hay pipeline) ─────────────────
 function abrirEditarDeps() {
-  const flow = flows.find(f => f.name === flowActivo);
-  if (!flow || !pipelineActual) return;
+  const nodo = todosLosNodos.find(f => f.name === flowActivo);
+  if (!nodo || !pipelineActual) return;
 
   const container = document.getElementById('checksDeps');
   container.innerHTML = '';
   const depsActuales = depsEnPipeline[flowActivo] || [];
 
-  flows.forEach(f => {
+  todosLosNodos.forEach(f => {
     if (f.name === flowActivo) return;
     const checked = depsActuales.includes(f.name);
+    const label = f._isTask ? `⚡ ${f.name}` : f.name;
     const div = document.createElement('div');
     div.className = 'form-check mb-0';
     div.innerHTML = `
       <input class="form-check-input dep-grafo" type="checkbox"
         value="${f.name}" id="depg_${f.name}" ${checked ? 'checked' : ''}>
-      <label class="form-check-label" for="depg_${f.name}">${f.name}</label>
+      <label class="form-check-label" for="depg_${f.name}">${label}</label>
     `;
     container.appendChild(div);
   });

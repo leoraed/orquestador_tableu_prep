@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from src.database import get_db
 from src.models import EjecucionFlow
 from src.runner import ejecutar_flow, _procesos_activos, _cancelados, _lock, _matar_proceso
-from src.config import load_flows, load_pipelines, load_settings, load_carpetas, descubrir_tfl, BASE_DIR, _load_yaml, _save_yaml
+from src.config import load_flows, load_pipelines, load_tasks, load_settings, load_carpetas, descubrir_tfl, BASE_DIR, _load_yaml, _save_yaml
 from src.scheduler import inicializar_scheduler, detener_scheduler, recargar_scheduler, scheduler, _disparar_pipeline
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -61,6 +61,12 @@ def _guardar_flows(flows: list[dict]) -> None:
 def _guardar_pipelines(pipelines: list[dict]) -> None:
     data = _load_yaml()
     data["pipelines"] = pipelines
+    _save_yaml(data)
+
+
+def _guardar_tasks(tasks: list[dict]) -> None:
+    data = _load_yaml()
+    data["tasks"] = tasks
     _save_yaml(data)
 
 
@@ -151,9 +157,11 @@ def _info_ejecucion(ej) -> dict | None:
 @app.get("/grafo")
 def pagina_grafo(request: Request, pipeline: str = None, db: Session = Depends(get_db)):
     flows = load_flows()
+    tasks = load_tasks()
     pipelines = load_pipelines()
 
     flows_en_grafo = flows
+    tasks_en_grafo = tasks
     deps_en_pipeline: dict[str, list[str]] = {}
     pipeline_seleccionado = None
 
@@ -163,21 +171,23 @@ def pagina_grafo(request: Request, pipeline: str = None, db: Session = Depends(g
             pipeline_seleccionado = pip["name"]
             nombres = {s["flow"] for s in pip.get("flows", [])}
             flows_en_grafo = [f for f in flows if f["name"] in nombres]
+            tasks_en_grafo = [t for t in tasks if t["name"] in nombres]
             for step in pip.get("flows", []):
                 deps_en_pipeline[step["flow"]] = step.get("depends_on", [])
 
     ultimos_estados = {}
-    for flow in flows_en_grafo:
+    for item in list(flows_en_grafo) + list(tasks_en_grafo):
         ej = db.query(EjecucionFlow).filter(
-            EjecucionFlow.nombre_flow == flow["name"]
+            EjecucionFlow.nombre_flow == item["name"]
         ).order_by(EjecucionFlow.inicio.desc()).first()
         info = _info_ejecucion(ej)
         if info:
-            ultimos_estados[flow["name"]] = info
+            ultimos_estados[item["name"]] = info
 
     return templates.TemplateResponse("grafo.html", {
         "request": request,
         "flows": flows_en_grafo,
+        "tasks": tasks_en_grafo,
         "deps_en_pipeline": deps_en_pipeline,
         "pipeline_seleccionado": pipeline_seleccionado,
         "pipelines": pipelines,
@@ -189,33 +199,47 @@ def pagina_grafo(request: Request, pipeline: str = None, db: Session = Depends(g
 @app.get("/api/grafo/estados")
 def api_grafo_estados(pipeline: str = None, db: Session = Depends(get_db)):
     flows = load_flows()
+    tasks = load_tasks()
     if pipeline:
         pips = {p["name"]: p for p in load_pipelines()}
         pip = pips.get(pipeline)
         if pip:
             nombres = {s["flow"] for s in pip.get("flows", [])}
             flows = [f for f in flows if f["name"] in nombres]
+            tasks = [t for t in tasks if t["name"] in nombres]
     result = {}
-    for flow in flows:
+    for item in list(flows) + list(tasks):
         ej = db.query(EjecucionFlow).filter(
-            EjecucionFlow.nombre_flow == flow["name"]
+            EjecucionFlow.nombre_flow == item["name"]
         ).order_by(EjecucionFlow.inicio.desc()).first()
-        result[flow["name"]] = _info_ejecucion(ej)
+        result[item["name"]] = _info_ejecucion(ej)
     return result
 
 
 @app.get("/pipelines")
 def pagina_pipelines(request: Request, msg: str = None):
     flows = load_flows()
+    tasks = load_tasks()
     pipelines = load_pipelines()
     jobs = _jobs_map()
     return templates.TemplateResponse("pipelines.html", {
         "request": request,
         "flows": flows,
+        "tasks": tasks,
         "pipelines": pipelines,
         "jobs": jobs,
         "mensaje": msg,
         "active": "pipelines",
+    })
+
+
+@app.get("/tasks")
+def pagina_tasks(request: Request, msg: str = None):
+    return templates.TemplateResponse("tasks.html", {
+        "request": request,
+        "tasks": load_tasks(),
+        "mensaje": msg,
+        "active": "tasks",
     })
 
 
@@ -444,6 +468,91 @@ async def api_editar_deps_en_pipeline(pipeline_name: str, flow_name: str, reques
     return JSONResponse({"ok": False, "error": f"Flow '{flow_name}' no está en el pipeline."})
 
 
+# ── CRUD tasks ─────────────────────────────────────────────────────────────
+
+@app.post("/api/tasks")
+async def api_crear_task(request: Request):
+    data = await request.json()
+    tasks = load_tasks()
+    nombre = (data.get("name") or "").strip()
+    if not nombre:
+        return JSONResponse({"ok": False, "error": "El nombre no puede estar vacío."})
+    flows = load_flows()
+    if any(f["name"] == nombre for f in flows) or any(t["name"] == nombre for t in tasks):
+        return JSONResponse({"ok": False, "error": f"Ya existe un flow o tarea con el nombre '{nombre}'."})
+    tasks.append({
+        "name": nombre,
+        "type": data.get("type", "tableau_cloud"),
+        "resource_type": data.get("resource_type", "workbook"),
+        "resource_name": data.get("resource_name", "").strip(),
+        "enabled": data.get("enabled", True),
+    })
+    _guardar_tasks(tasks)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/tasks/{nombre}/editar")
+async def api_editar_task(nombre: str, request: Request):
+    data = await request.json()
+    tasks = load_tasks()
+    idx = next((i for i, t in enumerate(tasks) if t["name"] == nombre), None)
+    if idx is None:
+        return JSONResponse({"ok": False, "error": f"Tarea '{nombre}' no encontrada."})
+    new_name = (data.get("name") or nombre).strip()
+    tasks[idx] = {
+        "name": new_name,
+        "type": data.get("type", "tableau_cloud"),
+        "resource_type": data.get("resource_type", "workbook"),
+        "resource_name": data.get("resource_name", "").strip(),
+        "enabled": data.get("enabled", True),
+    }
+    _guardar_tasks(tasks)
+    # If name changed, update pipeline references
+    if new_name != nombre:
+        pipelines = load_pipelines()
+        for pipeline in pipelines:
+            for step in pipeline.get("flows", []):
+                if step["flow"] == nombre:
+                    step["flow"] = new_name
+                step["depends_on"] = [new_name if d == nombre else d for d in step.get("depends_on", [])]
+        _guardar_pipelines(pipelines)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/tasks/{nombre}/eliminar")
+async def api_eliminar_task(nombre: str):
+    tasks = load_tasks()
+    nuevas = [t for t in tasks if t["name"] != nombre]
+    if len(nuevas) == len(tasks):
+        return JSONResponse({"ok": False, "error": f"Tarea '{nombre}' no encontrada."})
+    _guardar_tasks(nuevas)
+    # Remove from pipelines
+    pipelines = load_pipelines()
+    for pipeline in pipelines:
+        pipeline["flows"] = [s for s in pipeline.get("flows", []) if s["flow"] != nombre]
+        for step in pipeline["flows"]:
+            step["depends_on"] = [d for d in step.get("depends_on", []) if d != nombre]
+    _guardar_pipelines(pipelines)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/tasks/{nombre}/ejecutar")
+def api_ejecutar_task_manual(nombre: str, background_tasks: BackgroundTasks):
+    from src.tasks import ejecutar_task
+    tasks_map = {t["name"]: t for t in load_tasks()}
+    if nombre not in tasks_map:
+        return _redir("/tasks", f"Error: tarea '{nombre}' no encontrada.")
+    task = tasks_map[nombre]
+    background_tasks.add_task(
+        ejecutar_task,
+        task=task,
+        disparador="manual",
+        grupo_id=str(uuid.uuid4()),
+        pipeline_name=None,
+    )
+    return _redir("/tasks", f"Tarea '{nombre}' iniciada manualmente.")
+
+
 # ── carpetas ───────────────────────────────────────────────────────────────
 
 @app.post("/api/carpetas")
@@ -482,6 +591,10 @@ def api_guardar_configuracion(
     telegram_bot_token: Optional[str] = Form(None),
     telegram_chat_id: Optional[str] = Form(None),
     telegram_resumen_cron: Optional[str] = Form(None),
+    tableau_cloud_server: Optional[str] = Form(None),
+    tableau_cloud_site: Optional[str] = Form(None),
+    tableau_cloud_token_name: Optional[str] = Form(None),
+    tableau_cloud_token_value: Optional[str] = Form(None),
 ):
     s = load_settings()
     s["prep_cli_path"] = prep_cli_path.strip()
@@ -492,6 +605,12 @@ def api_guardar_configuracion(
     s["telegram_bot_token"] = (telegram_bot_token or "").strip()
     s["telegram_chat_id"] = (telegram_chat_id or "").strip()
     s["telegram_resumen_cron"] = (telegram_resumen_cron or "").strip()
+    s["tableau_cloud"] = {
+        "server": (tableau_cloud_server or "").strip(),
+        "site": (tableau_cloud_site or "").strip(),
+        "token_name": (tableau_cloud_token_name or "").strip(),
+        "token_value": (tableau_cloud_token_value or "").strip(),
+    }
     _guardar_settings(s)
     recargar_scheduler()
     return _redir("/configuracion", "Configuración guardada.")

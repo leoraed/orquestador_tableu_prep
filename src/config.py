@@ -47,6 +47,13 @@ def load_pipelines() -> list[dict]:
     return pipelines
 
 
+def load_tasks() -> list[dict]:
+    tasks = _load_yaml().get("tasks", []) or []
+    for task in tasks:
+        task.setdefault("enabled", True)
+    return tasks
+
+
 def load_carpetas() -> list[str]:
     return _load_yaml().get("carpetas", []) or []
 

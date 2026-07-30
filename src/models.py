@@ -19,3 +19,4 @@ class EjecucionFlow(Base):
     disparador: Mapped[str] = mapped_column(String(20), default="scheduler")  # scheduler | manual | dependencia
     grupo_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
     pipeline_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    step_type: Mapped[Optional[str]] = mapped_column(String(30), nullable=True, default="prep")

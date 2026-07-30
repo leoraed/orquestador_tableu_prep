@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from src.config import load_settings, load_flows, load_pipelines, BASE_DIR
+from src.config import load_settings, load_flows, load_pipelines, load_tasks, BASE_DIR
 from src.database import SessionLocal
 from src.models import EjecucionFlow
 
@@ -38,6 +38,7 @@ def _disparar_dependientes_en_pipeline(nombre_completado: str, grupo_id: str, pi
         return
 
     flows_map = {f["name"]: f for f in load_flows()}
+    tasks_map = {t["name"]: t for t in load_tasks()}
     s = load_settings()
     ttl = s.get("ttl_grupo_horas", 2)
     ventana_inicio = datetime.utcnow() - timedelta(hours=ttl)
@@ -49,8 +50,8 @@ def _disparar_dependientes_en_pipeline(nombre_completado: str, grupo_id: str, pi
         if nombre_completado not in deps:
             continue
 
-        flow = flows_map.get(flow_name)
-        if not flow or not flow.get("enabled", True):
+        step_def = flows_map.get(flow_name) or tasks_map.get(flow_name)
+        if not step_def or not step_def.get("enabled", True):
             continue
 
         db = SessionLocal()
@@ -94,20 +95,30 @@ def _disparar_dependientes_en_pipeline(nombre_completado: str, grupo_id: str, pi
         finally:
             db.close()
 
-        threading.Thread(
-            target=ejecutar_flow,
-            kwargs={
-                "nombre": flow["name"],
-                "archivo": flow["file"],
-                "credenciales": flow.get("credentials"),
-                "disparador": "dependencia",
-                "grupo_id": grupo_id,
-                "reintentos": flow.get("reintentos", 0),
-                "reintento_espera_min": flow.get("reintento_espera_min", 5),
-                "pipeline_name": pipeline_name,
-            },
-            daemon=True,
-        ).start()
+        if flow_name in flows_map:
+            flow = flows_map[flow_name]
+            threading.Thread(
+                target=ejecutar_flow,
+                kwargs={
+                    "nombre": flow["name"],
+                    "archivo": flow["file"],
+                    "credenciales": flow.get("credentials"),
+                    "disparador": "dependencia",
+                    "grupo_id": grupo_id,
+                    "reintentos": flow.get("reintentos", 0),
+                    "reintento_espera_min": flow.get("reintento_espera_min", 5),
+                    "pipeline_name": pipeline_name,
+                },
+                daemon=True,
+            ).start()
+        elif flow_name in tasks_map:
+            from src.tasks import ejecutar_task
+            task = tasks_map[flow_name]
+            threading.Thread(
+                target=ejecutar_task,
+                kwargs={"task": task, "disparador": "dependencia", "grupo_id": grupo_id, "pipeline_name": pipeline_name},
+                daemon=True,
+            ).start()
 
 
 def _correr_subprocess(

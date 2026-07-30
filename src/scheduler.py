@@ -4,7 +4,7 @@ import uuid
 from datetime import date, datetime, time as dt_time
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-from src.config import load_pipelines, load_flows, load_settings, settings
+from src.config import load_pipelines, load_flows, load_tasks, load_settings, settings
 from src.runner import ejecutar_flow
 
 logger = logging.getLogger(__name__)
@@ -20,6 +20,7 @@ def _disparar_pipeline(pipeline_name: str) -> None:
         return
 
     flows_map = {f["name"]: f for f in load_flows()}
+    tasks_map = {t["name"]: t for t in load_tasks()}
     grupo_id = str(uuid.uuid4())
 
     root_steps = [s for s in pipeline.get("flows", []) if not s.get("depends_on")]
@@ -31,27 +32,40 @@ def _disparar_pipeline(pipeline_name: str) -> None:
     logger.info(f"[{pipeline_name}] Disparando (grupo {grupo_id[:8]}) — {len(root_steps)} flow(s) raíz.")
 
     for step in root_steps:
-        flow = flows_map.get(step["flow"])
-        if not flow:
-            logger.warning(f"[{pipeline_name}] Flow '{step['flow']}' no encontrado — omitido.")
+        step_name = step["flow"]
+        if step_name in flows_map:
+            flow = flows_map[step_name]
+            if not flow.get("enabled", True):
+                logger.info(f"[{pipeline_name}] Flow '{step_name}' deshabilitado — omitido.")
+                continue
+            threading.Thread(
+                target=ejecutar_flow,
+                kwargs={
+                    "nombre": flow["name"],
+                    "archivo": flow["file"],
+                    "credenciales": flow.get("credentials"),
+                    "disparador": "scheduler",
+                    "grupo_id": grupo_id,
+                    "reintentos": flow.get("reintentos", 0),
+                    "reintento_espera_min": flow.get("reintento_espera_min", 5),
+                    "pipeline_name": pipeline_name,
+                },
+                daemon=True,
+            ).start()
+        elif step_name in tasks_map:
+            task = tasks_map[step_name]
+            if not task.get("enabled", True):
+                logger.info(f"[{pipeline_name}] Task '{step_name}' deshabilitada — omitida.")
+                continue
+            from src.tasks import ejecutar_task
+            threading.Thread(
+                target=ejecutar_task,
+                kwargs={"task": task, "disparador": "scheduler", "grupo_id": grupo_id, "pipeline_name": pipeline_name},
+                daemon=True,
+            ).start()
+        else:
+            logger.warning(f"[{pipeline_name}] Step '{step_name}' no encontrado en flows ni tasks — omitido.")
             continue
-        if not flow.get("enabled", True):
-            logger.info(f"[{pipeline_name}] Flow '{step['flow']}' deshabilitado — omitido.")
-            continue
-        threading.Thread(
-            target=ejecutar_flow,
-            kwargs={
-                "nombre": flow["name"],
-                "archivo": flow["file"],
-                "credenciales": flow.get("credentials"),
-                "disparador": "scheduler",
-                "grupo_id": grupo_id,
-                "reintentos": flow.get("reintentos", 0),
-                "reintento_espera_min": flow.get("reintento_espera_min", 5),
-                "pipeline_name": pipeline_name,
-            },
-            daemon=True,
-        ).start()
 
 
 def _registrar_pipelines() -> int:

@@ -31,6 +31,9 @@ with engine.connect() as conn:
     if "pipeline_name" not in existing:
         conn.execute(text("ALTER TABLE ejecuciones ADD COLUMN pipeline_name VARCHAR(255)"))
         conn.commit()
+    if "step_type" not in existing:
+        conn.execute(text("ALTER TABLE ejecuciones ADD COLUMN step_type VARCHAR(30) DEFAULT 'prep'"))
+        conn.commit()
 
 if __name__ == "__main__":
     import uvicorn
