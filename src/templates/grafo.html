@@ -118,8 +118,7 @@
         <div id="detalleEstado" class="mb-1"></div>
         <div id="detalleFecha" class="text-muted small mb-2"></div>
         <button id="btnEjecutar" class="btn btn-sm btn-primary" onclick="ejecutarFlow()">
-          <i class="bi bi-play-fill me-1"></i>
-          {% if pipeline_seleccionado %}Ejecutar pipeline{% else %}Ejecutar{% endif %}
+          <i class="bi bi-play-fill me-1"></i>Ejecutar
         </button>
         {% if pipeline_seleccionado %}
         <div class="mt-1">
@@ -311,12 +310,16 @@ async function ejecutarFlow() {
   const btn = document.getElementById('btnEjecutar');
 
   if (pipelineActual) {
-    if (!confirm(`¿Ejecutar el pipeline "${pipelineActual}" completo?`)) return;
+    if (!confirm(`¿Ejecutar "${flowActivo}" y su cadena en "${pipelineActual}"?`)) return;
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Iniciando...';
-    await fetch(`/api/pipelines/${encodeURIComponent(pipelineActual)}/ejecutar`, { method: 'POST', redirect: 'manual' });
+    await fetch(
+      `/api/pipelines/${encodeURIComponent(pipelineActual)}/steps/${encodeURIComponent(flowActivo)}/ejecutar`,
+      { method: 'POST' }
+    );
+    _marcarEnProceso();
     btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Ejecutar pipeline';
+    btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Ejecutar';
   } else {
     if (!confirm(`¿Ejecutar "${flowActivo}" ahora?`)) return;
     btn.disabled = true;
