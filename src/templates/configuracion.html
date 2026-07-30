@@ -90,6 +90,44 @@
         </div>
       </div>
 
+      <hr class="my-4">
+
+      <div class="mb-2">
+        <span class="fw-semibold">
+          <i class="bi bi-cloud me-1 text-primary"></i>Tableau Cloud
+        </span>
+        <div class="form-text mb-3">Credenciales para ejecutar tasks de tipo <code>tableau_cloud</code>.</div>
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label fw-semibold">Server URL</label>
+        <input type="text" name="tableau_cloud_server" class="form-control font-monospace"
+          value="{{ settings.tableau_cloud.server | default('') if settings.tableau_cloud else '' }}"
+          placeholder="https://10ax.online.tableau.com">
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label fw-semibold">Site ID</label>
+        <input type="text" name="tableau_cloud_site" class="form-control font-monospace"
+          value="{{ settings.tableau_cloud.site | default('') if settings.tableau_cloud else '' }}"
+          placeholder="mi-sitio">
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label fw-semibold">Token Name</label>
+        <input type="text" name="tableau_cloud_token_name" class="form-control font-monospace"
+          value="{{ settings.tableau_cloud.token_name | default('') if settings.tableau_cloud else '' }}"
+          placeholder="nombre-del-pat">
+      </div>
+
+      <div class="mb-4">
+        <label class="form-label fw-semibold">Token Value</label>
+        <input type="password" name="tableau_cloud_token_value" class="form-control font-monospace"
+          value="{{ settings.tableau_cloud.token_value | default('') if settings.tableau_cloud else '' }}"
+          placeholder="valor secreto del PAT">
+        <div class="form-text">Personal Access Token generado en tu cuenta de Tableau Cloud.</div>
+      </div>
+
       <button type="submit" class="btn btn-primary">
         <i class="bi bi-floppy me-1"></i>Guardar cambios
       </button>

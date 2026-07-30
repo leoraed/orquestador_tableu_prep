@@ -1,0 +1,534 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h5 class="mb-0 fw-bold">Pipelines</h5>
+  <button class="btn btn-primary" onclick="abrirModalNuevo()">
+    <i class="bi bi-plus-lg me-1"></i>Nuevo pipeline
+  </button>
+</div>
+
+{% if pipelines %}
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table mb-0">
+      <thead>
+        <tr>
+          <th>Nombre</th>
+          <th>Schedules</th>
+          <th>Flows</th>
+          <th>Próxima ejecución</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for pipeline in pipelines %}
+        <tr>
+          <td class="fw-semibold">{{ pipeline.name }}</td>
+          <td>
+            {% if pipeline.schedules %}
+              {% for s in pipeline.schedules %}
+                <code class="d-block">{{ s }}</code>
+              {% endfor %}
+            {% else %}
+              <span class="text-muted small fst-italic">solo manual</span>
+            {% endif %}
+          </td>
+          <td>
+            <span class="badge bg-light text-dark border">{{ pipeline.flows | length }} flow(s)</span>
+            <div class="small text-muted mt-1" style="max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+              {% for step in pipeline.flows %}
+                {{ step.flow }}{% if not loop.last %}, {% endif %}
+              {% endfor %}
+            </div>
+          </td>
+          <td class="text-muted small">{{ jobs.get(pipeline.name, '—') }}</td>
+          <td>
+            <div class="d-flex gap-1">
+              <a href="/grafo?pipeline={{ pipeline.name | urlencode }}"
+                 class="btn btn-sm btn-outline-secondary" title="Ver grafo">
+                <i class="bi bi-diagram-3"></i>
+              </a>
+              <form action="/api/pipelines/{{ pipeline.name }}/ejecutar" method="post">
+                <button class="btn btn-sm btn-outline-primary" title="Ejecutar ahora">
+                  <i class="bi bi-play-fill"></i>
+                </button>
+              </form>
+              <button class="btn btn-sm btn-outline-secondary" title="Editar"
+                data-pipeline="{{ pipeline | tojson | forceescape }}"
+                onclick="abrirModalEditar(JSON.parse(this.dataset.pipeline))">
+                <i class="bi bi-pencil"></i>
+              </button>
+              <form action="/api/pipelines/{{ pipeline.name }}/eliminar" method="post"
+                onsubmit="return confirm('¿Eliminar el pipeline {{ pipeline.name }}?')">
+                <button class="btn btn-sm btn-outline-danger" title="Eliminar">
+                  <i class="bi bi-trash"></i>
+                </button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% else %}
+<div class="card">
+  <div class="card-body text-center text-muted py-5">
+    <i class="bi bi-diagram-2 fs-2 d-block mb-2"></i>
+    No hay pipelines configurados. Creá uno para definir secuencias de flows.
+  </div>
+</div>
+{% endif %}
+
+
+<!-- ── Modal crear / editar pipeline ─────────────────────────────────────── -->
+<div class="modal fade" id="modalPipeline" tabindex="-1">
+  <div class="modal-dialog modal-xl">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title fw-bold" id="modalTitulo">Nuevo Pipeline</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+
+        <div class="row g-3 mb-3">
+          <div class="col-5">
+            <label class="form-label fw-semibold">Nombre <span class="text-danger">*</span></label>
+            <input type="text" id="inputNombre" class="form-control" placeholder="Carga diaria" required>
+          </div>
+          <div class="col-7">
+            <label class="form-label fw-semibold">Schedules (cron)</label>
+            <div id="listaSchedules"></div>
+            <button type="button" class="btn btn-sm btn-outline-secondary mt-1" onclick="agregarSchedule('')">
+              <i class="bi bi-plus-lg me-1"></i>Agregar horario
+            </button>
+            <div class="form-text">
+              <code>0 6 * * *</code> diario a las 6. Dejá vacío para solo manual.
+            </div>
+          </div>
+        </div>
+
+        <hr class="my-2">
+
+        <div class="row g-0" style="min-height:360px">
+
+          <!-- ── Columna izquierda: flows disponibles ── -->
+          <div class="col-3 border-end pe-3">
+            <div class="fw-semibold small mb-2 text-muted text-uppercase" style="letter-spacing:.5px">
+              Flows disponibles
+            </div>
+            <input type="search" id="buscarFlow" class="form-control form-control-sm mb-2"
+              placeholder="Buscar..." oninput="filtrarDisp()">
+            <div id="listaDisponibles" style="max-height:320px;overflow-y:auto"></div>
+          </div>
+
+          <!-- ── Columna derecha: tabla de flows con disparadores ── -->
+          <div class="col-9 ps-3">
+            <div class="fw-semibold small text-muted text-uppercase mb-2" style="letter-spacing:.5px">
+              Flows en el pipeline
+            </div>
+            <div id="sinFlows" class="text-center text-muted py-4 small fst-italic">
+              Seleccioná flows de la izquierda para agregar al pipeline.
+            </div>
+            <table class="table table-sm mb-0" id="tablaFlows" style="display:none">
+              <thead>
+                <tr>
+                  <th style="width:38%">Flow</th>
+                  <th>Corre cuando</th>
+                  <th style="width:28px"></th>
+                </tr>
+              </thead>
+              <tbody id="tbodyFlows"></tbody>
+            </table>
+          </div>
+
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="btnGuardar" onclick="guardarPipeline()">Guardar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Dropdown para seleccionar dependencia -->
+<div id="dropDeps" class="card shadow border" style="position:fixed;z-index:2100;min-width:260px;display:none">
+  <div class="card-body p-2">
+    <div class="small text-muted mb-1 px-1">Corre después de…</div>
+    <input type="search" id="buscarDep" class="form-control form-control-sm mb-1"
+      placeholder="Buscar flow..." oninput="filtrarDropDeps()">
+    <div id="listaDeps" style="max-height:220px;overflow-y:auto"></div>
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+const modal      = new bootstrap.Modal(document.getElementById('modalPipeline'));
+const todosFlows = {{ flows | map(attribute='name') | list | tojson }};
+const todosTasks = {{ (tasks if tasks is defined else []) | map(attribute='name') | list | tojson }};
+// Unified catalog: { name, isTask }
+const todosSteps = todosFlows.map(n => ({ name: n, isTask: false }))
+                 .concat(todosTasks.map(n => ({ name: n, isTask: true })));
+
+// Estado: array de { flow: string, depends_on: string[] }
+let pipelineFlows = [];
+let modoEdicion   = null;
+let dropTargetFlow = null;
+
+// ── Flows en el pipeline ──────────────────────────────────────────────────────
+
+function flowsEnPipeline() {
+  return pipelineFlows.map(s => s.flow);
+}
+
+function agregarFlow(nombre) {
+  if (pipelineFlows.find(s => s.flow === nombre)) return;
+  pipelineFlows.push({ flow: nombre, depends_on: [] });
+  renderTodo();
+}
+
+function quitarFlow(nombre) {
+  pipelineFlows = pipelineFlows.filter(s => s.flow !== nombre);
+  // Limpiar referencias en depends_on de otros flows
+  pipelineFlows.forEach(s => {
+    s.depends_on = s.depends_on.filter(d => d !== nombre);
+  });
+  renderTodo();
+}
+
+function agregarDep(flowNombre, dep) {
+  const step = pipelineFlows.find(s => s.flow === flowNombre);
+  if (!step || step.depends_on.includes(dep)) return;
+  step.depends_on.push(dep);
+  renderTodo();
+}
+
+function quitarDep(flowNombre, dep) {
+  const step = pipelineFlows.find(s => s.flow === flowNombre);
+  if (!step) return;
+  step.depends_on = step.depends_on.filter(d => d !== dep);
+  renderTodo();
+}
+
+// ── Render tabla ──────────────────────────────────────────────────────────────
+
+function renderTabla() {
+  const tbody    = document.getElementById('tbodyFlows');
+  const tabla    = document.getElementById('tablaFlows');
+  const sinFlows = document.getElementById('sinFlows');
+  tbody.innerHTML = '';
+
+  if (!pipelineFlows.length) {
+    tabla.style.display = 'none';
+    sinFlows.style.display = '';
+    return;
+  }
+  tabla.style.display = '';
+  sinFlows.style.display = 'none';
+
+  pipelineFlows.forEach(step => {
+    const tr = document.createElement('tr');
+
+    // Celda: nombre del step
+    const isTask = todosTasks.includes(step.flow);
+    const tdFlow = document.createElement('td');
+    tdFlow.style.cssText = 'max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.82rem;font-family:monospace;vertical-align:middle';
+    tdFlow.title = step.flow;
+    if (isTask) {
+      tdFlow.innerHTML = `<i class="bi bi-lightning-charge text-warning me-1" style="font-size:.75rem"></i>${escHtml(step.flow)}`;
+    } else {
+      tdFlow.textContent = step.flow;
+    }
+    tr.appendChild(tdFlow);
+
+    // Celda: disparadores
+    const tdCorre = document.createElement('td');
+    tdCorre.style.cssText = 'font-size:.8rem;vertical-align:middle';
+
+    if (step.depends_on.length === 0) {
+      const badge = document.createElement('span');
+      badge.className = 'badge bg-light text-secondary border me-1';
+      badge.style.fontSize = '.75rem';
+      badge.textContent = 'inicio del pipeline';
+      tdCorre.appendChild(badge);
+    } else {
+      step.depends_on.forEach(dep => {
+        const badge = document.createElement('span');
+        badge.className = 'badge bg-primary d-inline-flex align-items-center gap-1 me-1 mb-1';
+        badge.style.fontSize = '.75rem';
+
+        const arrow = document.createTextNode('→ ');
+        badge.appendChild(arrow);
+
+        const depSpan = document.createElement('span');
+        depSpan.className = 'text-truncate';
+        depSpan.style.maxWidth = '130px';
+        depSpan.title = dep;
+        depSpan.textContent = dep;
+        badge.appendChild(depSpan);
+
+        const btnClose = document.createElement('button');
+        btnClose.type = 'button';
+        btnClose.className = 'btn-close btn-close-white ms-1';
+        btnClose.style.cssText = 'font-size:.45rem;width:.5rem;height:.5rem';
+        btnClose.onclick = () => quitarDep(step.flow, dep);
+        badge.appendChild(btnClose);
+
+        tdCorre.appendChild(badge);
+      });
+    }
+
+    // Botón "+" para agregar dep
+    const btnAdd = document.createElement('button');
+    btnAdd.type = 'button';
+    btnAdd.className = 'btn btn-sm btn-link py-0 px-1 text-muted align-middle';
+    btnAdd.title = 'Agregar disparador';
+    btnAdd.innerHTML = '<i class="bi bi-plus-circle" style="font-size:.82rem"></i>';
+    btnAdd.onclick = e => abrirDropDeps(step.flow, e);
+    tdCorre.appendChild(btnAdd);
+
+    tr.appendChild(tdCorre);
+
+    // Celda: quitar flow
+    const tdDel = document.createElement('td');
+    tdDel.style.verticalAlign = 'middle';
+    const btnDel = document.createElement('button');
+    btnDel.type = 'button';
+    btnDel.className = 'btn btn-sm btn-link text-danger p-0';
+    btnDel.title = 'Quitar del pipeline';
+    btnDel.innerHTML = '<i class="bi bi-x-lg" style="font-size:.8rem"></i>';
+    btnDel.onclick = () => quitarFlow(step.flow);
+    tdDel.appendChild(btnDel);
+    tr.appendChild(tdDel);
+
+    tbody.appendChild(tr);
+  });
+}
+
+// ── Dropdown agregar dependencia ──────────────────────────────────────────────
+
+function abrirDropDeps(flowNombre, event) {
+  event.stopPropagation();
+  dropTargetFlow = flowNombre;
+  document.getElementById('buscarDep').value = '';
+  renderDropDeps();
+
+  const drop = document.getElementById('dropDeps');
+  drop.style.display = 'block';
+  const rect = event.target.closest('button').getBoundingClientRect();
+  let left = rect.left;
+  let top  = rect.bottom + 4;
+  if (left + 270 > window.innerWidth)  left = window.innerWidth - 274;
+  if (top  + 320 > window.innerHeight) top  = rect.top - 324;
+  drop.style.left = left + 'px';
+  drop.style.top  = top  + 'px';
+  setTimeout(() => document.getElementById('buscarDep').focus(), 50);
+}
+
+function renderDropDeps() {
+  if (!dropTargetFlow) return;
+  const step   = pipelineFlows.find(s => s.flow === dropTargetFlow);
+  const buscar = document.getElementById('buscarDep').value.toLowerCase();
+  const lista  = document.getElementById('listaDeps');
+  lista.innerHTML = '';
+
+  const candidatos = pipelineFlows.filter(s =>
+    s.flow !== dropTargetFlow &&
+    !step.depends_on.includes(s.flow) &&
+    s.flow.toLowerCase().includes(buscar)
+  );
+
+  if (!candidatos.length) {
+    lista.innerHTML = '<div class="text-muted small px-2 py-1 fst-italic">Sin opciones.</div>';
+    return;
+  }
+
+  candidatos.forEach(s => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-sm btn-link text-start w-100 py-1 px-2 text-dark text-decoration-none';
+    btn.style.fontSize = '.82rem';
+    btn.style.fontFamily = 'monospace';
+    btn.textContent = s.flow;
+    btn.onclick = () => { agregarDep(dropTargetFlow, s.flow); cerrarDropDeps(); };
+    lista.appendChild(btn);
+  });
+}
+
+function filtrarDropDeps() { renderDropDeps(); }
+
+function cerrarDropDeps() {
+  document.getElementById('dropDeps').style.display = 'none';
+  dropTargetFlow = null;
+}
+
+document.addEventListener('click', e => {
+  if (!e.target.closest('#dropDeps')) cerrarDropDeps();
+});
+
+// ── Flows disponibles (panel izquierdo) ───────────────────────────────────────
+
+function renderDisponibles() {
+  const enUso  = new Set(flowsEnPipeline());
+  const buscar = document.getElementById('buscarFlow').value.toLowerCase();
+  const container = document.getElementById('listaDisponibles');
+  container.innerHTML = '';
+
+  const disponibles = todosSteps.filter(s => !enUso.has(s.name) && s.name.toLowerCase().includes(buscar));
+
+  if (!disponibles.length) {
+    container.innerHTML = '<div class="text-muted small fst-italic px-1">Sin resultados.</div>';
+    return;
+  }
+
+  disponibles.forEach(({ name: nombre, isTask }) => {
+    const div = document.createElement('div');
+    div.className = 'd-flex justify-content-between align-items-center px-2 py-1 rounded mb-1';
+    div.style.cssText = `background:${isTask ? '#fff3cd' : '#f8f9fa'}`;
+
+    const inner = document.createElement('span');
+    inner.className = 'd-flex align-items-center gap-1 text-truncate me-1';
+
+    if (isTask) {
+      const icon = document.createElement('i');
+      icon.className = 'bi bi-lightning-charge text-warning flex-shrink-0';
+      icon.style.fontSize = '.75rem';
+      inner.appendChild(icon);
+    }
+
+    const span = document.createElement('span');
+    span.className = 'text-truncate';
+    span.title = nombre;
+    span.style.cssText = 'font-size:.8rem;font-family:monospace';
+    span.textContent = nombre;
+    inner.appendChild(span);
+
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-sm btn-link py-0 px-1 text-primary flex-shrink-0';
+    btn.title = isTask ? 'Agregar task al pipeline' : 'Agregar flow al pipeline';
+    btn.innerHTML = '<i class="bi bi-plus-lg"></i>';
+    btn.onclick = () => agregarFlow(nombre);
+
+    div.appendChild(inner);
+    div.appendChild(btn);
+    container.appendChild(div);
+  });
+}
+
+function filtrarDisp() { renderDisponibles(); }
+
+// ── Render total ──────────────────────────────────────────────────────────────
+
+function renderTodo() {
+  renderTabla();
+  renderDisponibles();
+}
+
+// ── Schedules ─────────────────────────────────────────────────────────────────
+
+function agregarSchedule(valor) {
+  const lista = document.getElementById('listaSchedules');
+  const div = document.createElement('div');
+  div.className = 'input-group mb-2 schedule-row';
+  div.innerHTML = `
+    <input type="text" class="form-control font-monospace schedule-input"
+      placeholder="0 6 * * *" value="${escHtml(valor || '')}">
+    <button type="button" class="btn btn-outline-danger"
+      onclick="this.closest('.schedule-row').remove()">
+      <i class="bi bi-x-lg"></i>
+    </button>
+  `;
+  lista.appendChild(div);
+  if (!valor) div.querySelector('input').focus();
+}
+
+function setSchedules(schedules) {
+  document.getElementById('listaSchedules').innerHTML = '';
+  (schedules || []).forEach(s => agregarSchedule(s));
+}
+
+// ── Abrir modales ─────────────────────────────────────────────────────────────
+
+function resetModal() {
+  document.getElementById('inputNombre').value = '';
+  setSchedules([]);
+  pipelineFlows = [];
+  document.getElementById('buscarFlow').value = '';
+  renderTodo();
+}
+
+function abrirModalNuevo() {
+  modoEdicion = null;
+  document.getElementById('modalTitulo').textContent = 'Nuevo Pipeline';
+  document.getElementById('btnGuardar').textContent = 'Crear';
+  document.getElementById('inputNombre').disabled = false;
+  resetModal();
+  modal.show();
+}
+
+function abrirModalEditar(pipeline) {
+  modoEdicion = pipeline.name;
+  document.getElementById('modalTitulo').textContent = 'Editar: ' + pipeline.name;
+  document.getElementById('btnGuardar').textContent = 'Guardar cambios';
+  document.getElementById('inputNombre').disabled = false;
+  document.getElementById('inputNombre').value = pipeline.name;
+  setSchedules(pipeline.schedules || []);
+  document.getElementById('buscarFlow').value = '';
+  pipelineFlows = (pipeline.flows || []).map(s => ({
+    flow: s.flow,
+    depends_on: [...(s.depends_on || [])],
+  }));
+  renderTodo();
+  modal.show();
+}
+
+// ── Guardar ───────────────────────────────────────────────────────────────────
+
+async function guardarPipeline() {
+  const nombre = document.getElementById('inputNombre').value.trim();
+  if (!nombre) { alert('El nombre del pipeline no puede estar vacío.'); return; }
+
+  const schedules = [...document.querySelectorAll('.schedule-input')]
+    .map(i => i.value.trim()).filter(Boolean);
+
+  if (!pipelineFlows.length) { alert('El pipeline debe tener al menos un flow.'); return; }
+
+  const data = { name: nombre, schedules, flows: pipelineFlows };
+
+  const url = modoEdicion
+    ? `/api/pipelines/${encodeURIComponent(modoEdicion)}/editar`
+    : '/api/pipelines';
+
+  const btn = document.getElementById('btnGuardar');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando...';
+
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    const result = await resp.json();
+    if (result.ok) { modal.hide(); location.reload(); }
+    else alert('Error: ' + result.error);
+  } catch (e) {
+    alert('Error de red: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = modoEdicion ? 'Guardar cambios' : 'Crear';
+  }
+}
+
+// ── Utilidades ────────────────────────────────────────────────────────────────
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+{% endblock %}

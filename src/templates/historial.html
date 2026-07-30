@@ -56,12 +56,10 @@
           </td>
           <td class="text-end">
             <div class="d-flex gap-1 justify-content-end">
-              {% if e.salida or e.error %}
               <button class="btn btn-sm btn-outline-secondary py-0"
-                onclick="verDetalle({{ e.id }}, {{ e.salida | tojson }}, {{ e.error | tojson }})">
+                onclick="verDetalle({{ e.id }})">
                 <i class="bi bi-terminal"></i>
               </button>
-              {% endif %}
               {% if e.estado == 'en_proceso' %}
               <form action="/api/ejecuciones/{{ e.id }}/cancelar" method="post"
                 onsubmit="return confirm('¿Cancelar la ejecución #{{ e.id }}?')">
@@ -110,27 +108,28 @@
 {% endblock %}
 {% block scripts %}
 <script>
-function verDetalle(id, salida, error) {
+async function verDetalle(id) {
   document.getElementById('modalDetalleTitle').textContent = `Detalle #${id}`;
-
-  const secSalida = document.getElementById('seccionSalida');
-  const secError  = document.getElementById('seccionError');
-
-  if (salida) {
-    document.getElementById('textSalida').textContent = salida;
-    secSalida.style.display = 'block';
-  } else {
-    secSalida.style.display = 'none';
-  }
-
-  if (error) {
-    document.getElementById('textError').textContent = error;
-    secError.style.display = 'block';
-  } else {
-    secError.style.display = 'none';
-  }
-
+  document.getElementById('textSalida').textContent = 'Cargando…';
+  document.getElementById('seccionSalida').style.display = 'block';
+  document.getElementById('seccionError').style.display = 'none';
   new bootstrap.Modal(document.getElementById('modalDetalle')).show();
+
+  try {
+    const resp = await fetch(`/api/ejecuciones/${id}`);
+    const data = await resp.json();
+
+    document.getElementById('textSalida').textContent = data.salida || '(sin salida capturada)';
+
+    if (data.error) {
+      document.getElementById('textError').textContent = data.error;
+      document.getElementById('seccionError').style.display = 'block';
+    } else {
+      document.getElementById('seccionError').style.display = 'none';
+    }
+  } catch (e) {
+    document.getElementById('textSalida').textContent = 'Error al cargar el log.';
+  }
 }
 </script>
 {% endblock %}

@@ -24,20 +24,34 @@ def load_settings() -> dict:
 def load_flows() -> list[dict]:
     flows = _load_yaml().get("flows", []) or []
     for flow in flows:
-        # Backward compat: acepta 'schedule' (str) o 'schedules' (list)
-        if "schedules" not in flow:
-            old = flow.pop("schedule", None)
-            flow["schedules"] = [old] if old else []
-        elif isinstance(flow.get("schedules"), str):
-            s = flow["schedules"]
-            flow["schedules"] = [s] if s else []
+        flow.pop("schedules", None)
         flow.pop("schedule", None)
-        flow["schedules"] = [s for s in (flow["schedules"] or []) if s]
-        if "depends_on" not in flow:
-            flow["depends_on"] = []
+        flow.pop("depends_on", None)
         flow.setdefault("reintentos", 0)
         flow.setdefault("reintento_espera_min", 5)
+        flow.setdefault("enabled", True)
     return flows
+
+
+def load_pipelines() -> list[dict]:
+    pipelines = _load_yaml().get("pipelines", []) or []
+    for pipeline in pipelines:
+        if "schedules" not in pipeline:
+            pipeline["schedules"] = []
+        elif isinstance(pipeline["schedules"], str):
+            s = pipeline["schedules"]
+            pipeline["schedules"] = [s] if s else []
+        pipeline["schedules"] = [s for s in (pipeline["schedules"] or []) if s]
+        for step in pipeline.get("flows", []):
+            step.setdefault("depends_on", [])
+    return pipelines
+
+
+def load_tasks() -> list[dict]:
+    tasks = _load_yaml().get("tasks", []) or []
+    for task in tasks:
+        task.setdefault("enabled", True)
+    return tasks
 
 
 def load_carpetas() -> list[str]:

@@ -9,14 +9,49 @@
     <span><span class="badge" style="background:#dc3545">&nbsp;</span> Fallido</span>
     <span><span class="badge" style="background:#fd7e14">&nbsp;</span> En proceso</span>
     <span><span class="badge" style="background:#6c757d">&nbsp;</span> Cancelado / Inactivo</span>
+    <span class="ms-2 border-start ps-3">○ corrió hoy &nbsp;|&nbsp; ● desactualizado &nbsp;|&nbsp; <span style="background:#6ea8fe;border-radius:3px;padding:0 4px;font-size:.75rem">&nbsp;</span> Task</span>
   </div>
 </div>
 
-{% if not flows %}
+<!-- Selector de pipeline -->
+<div class="card mb-3">
+  <div class="card-body py-2">
+    <div class="d-flex align-items-center gap-3 flex-wrap">
+      <label class="fw-semibold mb-0 text-nowrap">
+        <i class="bi bi-diagram-2 me-1 text-primary"></i>Pipeline:
+      </label>
+      {% if pipelines %}
+      <div class="d-flex gap-2 flex-wrap">
+        <a href="/grafo"
+           class="btn btn-sm {% if not pipeline_seleccionado %}btn-primary{% else %}btn-outline-secondary{% endif %}">
+          Todos los flows
+        </a>
+        {% for p in pipelines %}
+        <a href="/grafo?pipeline={{ p.name | urlencode }}"
+           class="btn btn-sm {% if pipeline_seleccionado == p.name %}btn-primary{% else %}btn-outline-secondary{% endif %}">
+          {{ p.name }}
+        </a>
+        {% endfor %}
+      </div>
+      {% else %}
+      <span class="text-muted small fst-italic">
+        No hay pipelines. <a href="/pipelines">Creá uno</a> para ver dependencias.
+      </span>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{% set todos_los_nodos = flows + (tasks if tasks is defined else []) %}
+{% if not todos_los_nodos %}
 <div class="card">
   <div class="text-center text-muted py-5">
     <i class="bi bi-diagram-3 fs-2 d-block mb-2"></i>
-    No hay flows configurados aún.
+    {% if pipeline_seleccionado %}
+      El pipeline "{{ pipeline_seleccionado }}" no tiene flows ni tasks asignados.
+    {% else %}
+      No hay flows ni tasks configurados aún.
+    {% endif %}
   </div>
 </div>
 {% else %}
@@ -46,24 +81,53 @@
   </div>
   <div class="card-body small">
     <div class="row g-3 align-items-start">
-      <div class="col-5">
+      <div class="col-6">
         <div class="text-muted mb-1">Archivo</div>
         <div id="detalleArchivo" class="font-monospace" style="word-break:break-all"></div>
       </div>
-      <div class="col-2">
-        <div class="text-muted mb-1">Schedule(s)</div>
-        <div id="detalleSchedule"></div>
+      <div class="col-4">
+        <div class="d-flex justify-content-between align-items-center mb-1">
+          <span class="text-muted">Depende de</span>
+          {% if pipeline_seleccionado %}
+          <button class="btn btn-outline-secondary py-0 px-1" style="font-size:.7rem"
+            onclick="abrirEditarDeps()" title="Editar dependencias">
+            <i class="bi bi-pencil"></i>
+          </button>
+          {% endif %}
+        </div>
+        <div id="seccionDetalleDeps">
+          <div id="detalleDeps"></div>
+        </div>
+        {% if pipeline_seleccionado %}
+        <div id="seccionEditarDeps" class="d-none">
+          <div id="checksDeps" class="border rounded p-1 mb-1"
+            style="max-height:110px;overflow-y:auto;background:#f8f9fa;font-size:.82rem"></div>
+          <div class="d-flex gap-1">
+            <button class="btn btn-sm btn-primary py-0" onclick="guardarDeps()">
+              <i class="bi bi-check-lg me-1"></i>Guardar
+            </button>
+            <button class="btn btn-sm btn-outline-secondary py-0" onclick="cancelarEditarDeps()">
+              Cancelar
+            </button>
+          </div>
+        </div>
+        {% endif %}
       </div>
-      <div class="col-2">
-        <div class="text-muted mb-1">Depende de</div>
-        <div id="detalleDeps"></div>
-      </div>
-      <div class="col-3 text-end">
+      <div class="col-2 text-end">
         <div class="text-muted mb-1">Último estado</div>
-        <div id="detalleEstado" class="mb-2"></div>
+        <div id="detalleEstado" class="mb-1"></div>
+        <div id="detalleFecha" class="text-muted small mb-2"></div>
         <button id="btnEjecutar" class="btn btn-sm btn-primary" onclick="ejecutarFlow()">
-          <i class="bi bi-play-fill me-1"></i>Ejecutar ahora
+          <i class="bi bi-play-fill me-1"></i>
+          {% if pipeline_seleccionado %}Ejecutar pipeline{% else %}Ejecutar{% endif %}
         </button>
+        {% if pipeline_seleccionado %}
+        <div class="mt-1">
+          <a href="#" class="small text-muted" onclick="ejecutarSolo(); return false;">
+            Solo este flow
+          </a>
+        </div>
+        {% endif %}
       </div>
     </div>
   </div>
@@ -73,16 +137,29 @@
 {% endblock %}
 
 {% block scripts %}
-{% if flows %}
+{% if flows or tasks %}
 <link href="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.css" rel="stylesheet">
 <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
 <script>
-const flows        = {{ flows | tojson }};
-const estadosInit  = {{ ultimos_estados | tojson }};
+const flows           = {{ flows | tojson }};
+const tasks           = {{ (tasks if tasks is defined else []) | tojson }};
+const todosLosNodos   = flows.concat(tasks.map(t => ({...t, _isTask: true})));
+const estadosInit     = {{ ultimos_estados | tojson }};
+const depsEnPipeline  = {{ deps_en_pipeline | tojson }};
+const pipelineActual  = {{ pipeline_seleccionado | tojson }};
 
-// ── Colores ──────────────────────────────────────────────────────────────────
-function colorPorEstado(estado, enabled) {
+// ── Colores y etiquetas ───────────────────────────────────────────────────────
+function colorPorEstado(estado, enabled, isTask) {
   if (!enabled) return { background: '#6c757d', border: '#495057' };
+  if (isTask) {
+    switch (estado) {
+      case 'exitoso':    return { background: '#0d6efd', border: '#0a58ca' };
+      case 'fallido':    return { background: '#dc3545', border: '#b02a37' };
+      case 'en_proceso': return { background: '#fd7e14', border: '#c96a00' };
+      case 'cancelado':  return { background: '#6c757d', border: '#495057' };
+      default:           return { background: '#6ea8fe', border: '#0d6efd' };
+    }
+  }
   switch (estado) {
     case 'exitoso':    return { background: '#198754', border: '#146c43' };
     case 'fallido':    return { background: '#dc3545', border: '#b02a37' };
@@ -90,6 +167,13 @@ function colorPorEstado(estado, enabled) {
     case 'cancelado':  return { background: '#6c757d', border: '#495057' };
     default:           return { background: '#4fc3f7', border: '#0288d1' };
   }
+}
+
+function etiquetaNodo(nombre, info, isTask) {
+  const prefix = isTask ? '⚡ ' : '';
+  if (!info) return prefix + nombre;
+  const dot = info.es_hoy ? '○' : '●';
+  return `${dot} ${prefix}${nombre}`;
 }
 
 function badgeEstado(estado) {
@@ -104,29 +188,39 @@ function badgeEstado(estado) {
 }
 
 // ── Dataset ──────────────────────────────────────────────────────────────────
-const nodesDS = new vis.DataSet(flows.map(f => ({
-  id:    f.name,
-  label: f.name,
-  color: { ...colorPorEstado(estadosInit[f.name] ?? null, f.enabled), highlight: { background: '#fff', border: '#333' } },
-  font:  { color: '#fff', size: 14, bold: true },
-  shape: 'box',
-  margin: 10,
-  shadow: true,
-})));
+const nodesDS = new vis.DataSet(todosLosNodos.map(f => {
+  const info = estadosInit[f.name] ?? null;
+  const isTask = !!f._isTask;
+  return {
+    id:    f.name,
+    label: etiquetaNodo(f.name, info, isTask),
+    color: { ...colorPorEstado(info?.estado ?? null, f.enabled, isTask), highlight: { background: '#fff', border: '#333' } },
+    font:  { color: '#fff', size: 14, bold: true },
+    shape: isTask ? 'ellipse' : 'box',
+    margin: 10,
+    shadow: true,
+    _isTask: isTask,
+  };
+}));
 
 const edgesDS = new vis.DataSet();
-flows.forEach(f => {
-  (f.depends_on || []).forEach(dep => {
-    edgesDS.add({
-      from: dep,
-      to:   f.name,
-      arrows: 'to',
-      color:  { color: '#adb5bd', highlight: '#495057', opacity: 0.8 },
-      smooth: { type: 'cubicBezier', forceDirection: 'vertical', roundness: 0.4 },
-      width: 2,
+if (pipelineActual) {
+  // Aristas desde las deps del pipeline seleccionado
+  Object.entries(depsEnPipeline).forEach(([flowNombre, deps]) => {
+    (deps || []).forEach(dep => {
+      edgesDS.add({
+        from: dep,
+        to:   flowNombre,
+        arrows: 'to',
+        color:  { color: '#adb5bd', highlight: '#495057', opacity: 0.8 },
+        smooth: { type: 'cubicBezier', forceDirection: 'vertical', roundness: 0.4 },
+        width: 2,
+      });
     });
   });
-});
+} else {
+  // Sin pipeline: no hay aristas (las deps son por pipeline)
+}
 
 // ── Red ──────────────────────────────────────────────────────────────────────
 const container = document.getElementById('grafo');
@@ -149,7 +243,6 @@ const network = new vis.Network(
   }
 );
 
-// Una vez renderizado el layout jerárquico, liberar la física para arrastre libre
 network.once('afterDrawing', () => {
   network.setOptions({ layout: { hierarchical: { enabled: false } } });
 });
@@ -167,71 +260,193 @@ function reordenar() {
 
 // ── Detalle al hacer click ────────────────────────────────────────────────────
 let flowActivo = null;
+let flowActivoEsTask = false;
 
 network.on('click', params => {
   if (!params.nodes.length) return;
   const nombre = params.nodes[0];
-  const flow   = flows.find(f => f.name === nombre);
-  if (!flow) return;
+  const nodo   = todosLosNodos.find(f => f.name === nombre);
+  if (!nodo) return;
   flowActivo = nombre;
+  flowActivoEsTask = !!nodo._isTask;
 
-  document.getElementById('detalleNombre').textContent = flow.name;
-  document.getElementById('detalleArchivo').textContent = flow.file;
-  document.getElementById('detalleSchedule').innerHTML =
-    flow.schedules && flow.schedules.length
-      ? flow.schedules.map(s => `<code>${s}</code>`).join('<br>')
-      : '<span class="text-muted fst-italic">ninguno</span>';
+  document.getElementById('detalleNombre').textContent = nodo.name;
+  if (flowActivoEsTask) {
+    document.getElementById('detalleArchivo').textContent =
+      `${nodo.type} — ${nodo.resource_type}: ${nodo.resource_name}`;
+  } else {
+    document.getElementById('detalleArchivo').textContent = nodo.file;
+  }
+
+  const deps = depsEnPipeline[nombre] || [];
   document.getElementById('detalleDeps').innerHTML =
-    flow.depends_on && flow.depends_on.length
-      ? flow.depends_on.join('<br>')
-      : '<span class="text-muted fst-italic">ninguna</span>';
-  document.getElementById('detalleEstado').innerHTML = badgeEstado(estadosInit[nombre] ?? null);
+    deps.length
+      ? deps.join('<br>')
+      : '<span class="text-muted fst-italic">' + (pipelineActual ? 'ninguna' : 'seleccioná un pipeline') + '</span>';
+
+  const info = estadosInit[nombre];
+  document.getElementById('detalleEstado').innerHTML = badgeEstado(info?.estado ?? null);
+  document.getElementById('detalleFecha').textContent = info
+    ? (info.es_hoy ? 'Hoy ' : '') + info.fecha
+    : 'Sin ejecuciones';
   document.getElementById('panelDetalle').classList.remove('d-none');
+
+  const editDiv = document.getElementById('seccionEditarDeps');
+  if (editDiv) editDiv.classList.add('d-none');
+  const verDiv = document.getElementById('seccionDetalleDeps');
+  if (verDiv) verDiv.classList.remove('d-none');
 });
 
-// ── Ejecutar flow ─────────────────────────────────────────────────────────────
+// ── Ejecutar ──────────────────────────────────────────────────────────────────
 async function ejecutarFlow() {
   if (!flowActivo) return;
-  if (!confirm(`¿Ejecutar "${flowActivo}" ahora?`)) return;
-
   const btn = document.getElementById('btnEjecutar');
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Iniciando...';
 
-  await fetch(`/api/flows/${encodeURIComponent(flowActivo)}/ejecutar`, { method: 'POST', redirect: 'manual' });
+  if (pipelineActual) {
+    if (!confirm(`¿Ejecutar el pipeline "${pipelineActual}" completo?`)) return;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Iniciando...';
+    await fetch(`/api/pipelines/${encodeURIComponent(pipelineActual)}/ejecutar`, { method: 'POST', redirect: 'manual' });
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Ejecutar pipeline';
+  } else {
+    if (!confirm(`¿Ejecutar "${flowActivo}" ahora?`)) return;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Iniciando...';
+    const endpoint = flowActivoEsTask
+      ? `/api/tasks/${encodeURIComponent(flowActivo)}/ejecutar`
+      : `/api/flows/${encodeURIComponent(flowActivo)}/ejecutar`;
+    await fetch(endpoint, { method: 'POST', redirect: 'manual' });
+    _marcarEnProceso();
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Ejecutar';
+  }
+}
 
-  // Actualizar nodo a "en_proceso" inmediatamente
-  actualizarColorNodo(flowActivo, 'en_proceso');
+async function ejecutarSolo() {
+  if (!flowActivo || !confirm(`¿Ejecutar solo "${flowActivo}" sin cascada?`)) return;
+  const endpoint = flowActivoEsTask
+    ? `/api/tasks/${encodeURIComponent(flowActivo)}/ejecutar`
+    : `/api/flows/${encodeURIComponent(flowActivo)}/ejecutar`;
+  await fetch(endpoint, { method: 'POST', redirect: 'manual' });
+  _marcarEnProceso();
+}
+
+function _marcarEnProceso() {
+  actualizarNodo(flowActivo, { estado: 'en_proceso', es_hoy: true, fecha: new Date().toLocaleString('es-AR') });
   document.getElementById('detalleEstado').innerHTML = badgeEstado('en_proceso');
-
-  btn.disabled = false;
-  btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Ejecutar ahora';
+  document.getElementById('detalleFecha').textContent = 'Hoy';
 }
 
 // ── Actualizar colores desde API ──────────────────────────────────────────────
-function actualizarColorNodo(nombre, estado) {
-  const flow = flows.find(f => f.name === nombre);
-  if (!flow) return;
-  estadosInit[nombre] = estado;
+function actualizarNodo(nombre, info) {
+  const nodo = todosLosNodos.find(f => f.name === nombre);
+  if (!nodo) return;
+  const isTask = !!nodo._isTask;
+  estadosInit[nombre] = info;
   nodesDS.update({
-    id: nombre,
-    color: { ...colorPorEstado(estado, flow.enabled), highlight: { background: '#fff', border: '#333' } },
+    id:    nombre,
+    label: etiquetaNodo(nombre, info, isTask),
+    color: { ...colorPorEstado(info?.estado ?? null, nodo.enabled, isTask), highlight: { background: '#fff', border: '#333' } },
   });
 }
 
 async function refrescarEstados() {
   try {
-    const resp = await fetch('/api/grafo/estados');
+    const url = pipelineActual
+      ? `/api/grafo/estados?pipeline=${encodeURIComponent(pipelineActual)}`
+      : '/api/grafo/estados';
+    const resp = await fetch(url);
     const estados = await resp.json();
-    Object.entries(estados).forEach(([nombre, estado]) => {
-      if (estadosInit[nombre] !== estado) {
-        actualizarColorNodo(nombre, estado);
+    Object.entries(estados).forEach(([nombre, info]) => {
+      const anterior = estadosInit[nombre];
+      const cambio = !anterior && info ||
+                     anterior && !info ||
+                     anterior?.estado !== info?.estado ||
+                     anterior?.es_hoy !== info?.es_hoy;
+      if (cambio) {
+        actualizarNodo(nombre, info);
         if (flowActivo === nombre) {
-          document.getElementById('detalleEstado').innerHTML = badgeEstado(estado);
+          document.getElementById('detalleEstado').innerHTML = badgeEstado(info?.estado ?? null);
+          document.getElementById('detalleFecha').textContent = info
+            ? (info.es_hoy ? 'Hoy ' : '') + info.fecha
+            : 'Sin ejecuciones';
         }
       }
     });
   } catch (_) {}
+}
+
+// ── Editar dependencias desde el grafo (solo si hay pipeline) ─────────────────
+function abrirEditarDeps() {
+  const nodo = todosLosNodos.find(f => f.name === flowActivo);
+  if (!nodo || !pipelineActual) return;
+
+  const container = document.getElementById('checksDeps');
+  container.innerHTML = '';
+  const depsActuales = depsEnPipeline[flowActivo] || [];
+
+  todosLosNodos.forEach(f => {
+    if (f.name === flowActivo) return;
+    const checked = depsActuales.includes(f.name);
+    const label = f._isTask ? `⚡ ${f.name}` : f.name;
+    const div = document.createElement('div');
+    div.className = 'form-check mb-0';
+    div.innerHTML = `
+      <input class="form-check-input dep-grafo" type="checkbox"
+        value="${f.name}" id="depg_${f.name}" ${checked ? 'checked' : ''}>
+      <label class="form-check-label" for="depg_${f.name}">${label}</label>
+    `;
+    container.appendChild(div);
+  });
+
+  document.getElementById('seccionDetalleDeps').classList.add('d-none');
+  document.getElementById('seccionEditarDeps').classList.remove('d-none');
+}
+
+function cancelarEditarDeps() {
+  document.getElementById('seccionEditarDeps').classList.add('d-none');
+  document.getElementById('seccionDetalleDeps').classList.remove('d-none');
+}
+
+async function guardarDeps() {
+  if (!flowActivo || !pipelineActual) return;
+
+  const nuevasDeps = [...document.querySelectorAll('.dep-grafo:checked')].map(c => c.value);
+
+  try {
+    const resp = await fetch(
+      `/api/pipelines/${encodeURIComponent(pipelineActual)}/flows/${encodeURIComponent(flowActivo)}/deps`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ depends_on: nuevasDeps }),
+      }
+    );
+    const result = await resp.json();
+    if (!result.ok) { alert('Error: ' + result.error); return; }
+
+    // Actualizar datos locales
+    depsEnPipeline[flowActivo] = nuevasDeps;
+
+    // Actualizar aristas en el grafo
+    edgesDS.remove(edgesDS.get().filter(e => e.to === flowActivo).map(e => e.id));
+    nuevasDeps.forEach(dep => {
+      edgesDS.add({
+        from: dep, to: flowActivo, arrows: 'to',
+        color: { color: '#adb5bd', highlight: '#495057', opacity: 0.8 },
+        smooth: { type: 'cubicBezier', forceDirection: 'vertical', roundness: 0.4 },
+        width: 2,
+      });
+    });
+
+    document.getElementById('detalleDeps').innerHTML = nuevasDeps.length
+      ? nuevasDeps.join('<br>')
+      : '<span class="text-muted fst-italic">ninguna</span>';
+    cancelarEditarDeps();
+  } catch (e) {
+    alert('Error al guardar: ' + e.message);
+  }
 }
 
 // Cuenta regresiva y refresco automático cada 15s

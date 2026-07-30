@@ -1,9 +1,10 @@
 import logging
+import threading
 import uuid
 from datetime import date, datetime, time as dt_time
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-from src.config import load_flows, load_settings, settings
+from src.config import load_pipelines, load_flows, load_tasks, load_settings, settings
 from src.runner import ejecutar_flow
 
 logger = logging.getLogger(__name__)
@@ -11,56 +12,90 @@ logger = logging.getLogger(__name__)
 scheduler = BackgroundScheduler(timezone=settings["timezone"])
 
 
-def _disparar_scheduled(nombre: str, archivo: str, credenciales=None, reintentos: int = 0, reintento_espera_min: int = 5) -> None:
-    ejecutar_flow(
-        nombre=nombre,
-        archivo=archivo,
-        credenciales=credenciales,
-        disparador="scheduler",
-        grupo_id=str(uuid.uuid4()),
-        reintentos=reintentos,
-        reintento_espera_min=reintento_espera_min,
-    )
+def _disparar_pipeline(pipeline_name: str) -> None:
+    pipelines = {p["name"]: p for p in load_pipelines()}
+    pipeline = pipelines.get(pipeline_name)
+    if not pipeline:
+        logger.warning(f"Pipeline '{pipeline_name}' no encontrado en la configuración.")
+        return
 
+    flows_map = {f["name"]: f for f in load_flows()}
+    tasks_map = {t["name"]: t for t in load_tasks()}
+    grupo_id = str(uuid.uuid4())
 
-def _registrar_flows() -> int:
-    flows = load_flows()
-    jobs_registrados = 0
-    for flow in flows:
-        if not flow.get("enabled", True):
-            logger.info(f"[{flow['name']}] Deshabilitado, se omite.")
-            continue
+    root_steps = [s for s in pipeline.get("flows", []) if not s.get("depends_on")]
 
-        schedules = flow.get("schedules") or []
-        deps = flow.get("depends_on") or []
+    if not root_steps:
+        logger.warning(f"[{pipeline_name}] Sin flows raíz (sin depends_on) — pipeline no iniciará.")
+        return
 
-        if not schedules and not deps:
-            logger.warning(f"[{flow['name']}] Sin schedule ni depends_on — nunca se disparará.")
-            continue
+    logger.info(f"[{pipeline_name}] Disparando (grupo {grupo_id[:8]}) — {len(root_steps)} flow(s) raíz.")
 
-        if not schedules:
-            logger.info(f"[{flow['name']}] Flow pasivo (solo por dependencia).")
-            continue
-
-        for i, schedule in enumerate(schedules):
-            job_id = f"{flow['name']}__s{i}"
-            scheduler.add_job(
-                _disparar_scheduled,
-                trigger=CronTrigger.from_crontab(schedule, timezone=settings["timezone"]),
+    for step in root_steps:
+        step_name = step["flow"]
+        if step_name in flows_map:
+            flow = flows_map[step_name]
+            if not flow.get("enabled", True):
+                logger.info(f"[{pipeline_name}] Flow '{step_name}' deshabilitado — omitido.")
+                continue
+            threading.Thread(
+                target=ejecutar_flow,
                 kwargs={
                     "nombre": flow["name"],
                     "archivo": flow["file"],
                     "credenciales": flow.get("credentials"),
+                    "disparador": "scheduler",
+                    "grupo_id": grupo_id,
                     "reintentos": flow.get("reintentos", 0),
                     "reintento_espera_min": flow.get("reintento_espera_min", 5),
+                    "pipeline_name": pipeline_name,
                 },
-                id=job_id,
-                name=f"{flow['name']} [{schedule}]",
-                replace_existing=True,
-                misfire_grace_time=300,
-            )
-            logger.info(f"[{flow['name']}] Disparador #{i+1}: '{schedule}'")
-            jobs_registrados += 1
+                daemon=True,
+            ).start()
+        elif step_name in tasks_map:
+            task = tasks_map[step_name]
+            if not task.get("enabled", True):
+                logger.info(f"[{pipeline_name}] Task '{step_name}' deshabilitada — omitida.")
+                continue
+            from src.tasks import ejecutar_task
+            threading.Thread(
+                target=ejecutar_task,
+                kwargs={"task": task, "disparador": "scheduler", "grupo_id": grupo_id, "pipeline_name": pipeline_name},
+                daemon=True,
+            ).start()
+        else:
+            logger.warning(f"[{pipeline_name}] Step '{step_name}' no encontrado en flows ni tasks — omitido.")
+            continue
+
+
+def _registrar_pipelines() -> int:
+    pipelines = load_pipelines()
+    jobs_registrados = 0
+
+    for pipeline in pipelines:
+        nombre = pipeline["name"]
+        schedules = pipeline.get("schedules") or []
+
+        if not schedules:
+            logger.info(f"[{nombre}] Pipeline sin schedule — solo disparo manual.")
+            continue
+
+        for i, schedule in enumerate(schedules):
+            job_id = f"{nombre}__s{i}"
+            try:
+                scheduler.add_job(
+                    _disparar_pipeline,
+                    trigger=CronTrigger.from_crontab(schedule, timezone=settings["timezone"]),
+                    kwargs={"pipeline_name": nombre},
+                    id=job_id,
+                    name=f"{nombre} [{schedule}]",
+                    replace_existing=True,
+                    misfire_grace_time=300,
+                )
+                logger.info(f"[{nombre}] Disparador #{i+1}: '{schedule}'")
+                jobs_registrados += 1
+            except Exception as exc:
+                logger.error(f"[{nombre}] Cron inválido '{schedule}': {exc}")
 
     return jobs_registrados
 
@@ -123,7 +158,7 @@ def _registrar_resumen() -> None:
 
 
 def inicializar_scheduler() -> None:
-    n = _registrar_flows()
+    n = _registrar_pipelines()
     _registrar_resumen()
     scheduler.start()
     logger.info(f"Scheduler iniciado — {n} disparador(es) activos.")
@@ -131,7 +166,7 @@ def inicializar_scheduler() -> None:
 
 def recargar_scheduler() -> None:
     scheduler.remove_all_jobs()
-    n = _registrar_flows()
+    n = _registrar_pipelines()
     _registrar_resumen()
     logger.info(f"Scheduler recargado — {n} disparador(es) activos.")
 

@@ -1,0 +1,222 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h5 class="mb-0 fw-bold">Tasks</h5>
+  <button class="btn btn-primary btn-sm" onclick="abrirModalNuevo()">
+    <i class="bi bi-plus-lg me-1"></i>Nueva task
+  </button>
+</div>
+
+{% if tasks %}
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table mb-0">
+      <thead>
+        <tr>
+          <th>Nombre</th>
+          <th>Tipo</th>
+          <th>Recurso</th>
+          <th>Estado</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for task in tasks %}
+        <tr>
+          <td class="fw-semibold">{{ task.name }}</td>
+          <td>
+            <span class="badge bg-info text-dark">{{ task.type }}</span>
+          </td>
+          <td class="text-muted small">
+            <span class="badge bg-light text-dark border me-1">{{ task.resource_type }}</span>
+            {{ task.resource_name }}
+          </td>
+          <td>
+            {% if task.enabled %}
+              <span class="badge bg-success rounded-pill">Activa</span>
+            {% else %}
+              <span class="badge bg-secondary rounded-pill">Inactiva</span>
+            {% endif %}
+          </td>
+          <td>
+            <div class="d-flex gap-1">
+              <form action="/api/tasks/{{ task.name }}/ejecutar" method="post">
+                <button class="btn btn-sm btn-outline-primary" title="Ejecutar ahora">
+                  <i class="bi bi-play-fill"></i>
+                </button>
+              </form>
+              <button class="btn btn-sm btn-outline-secondary" title="Editar"
+                data-task="{{ task | tojson | forceescape }}"
+                onclick="abrirModalEditar(JSON.parse(this.dataset.task))">
+                <i class="bi bi-pencil"></i>
+              </button>
+              <button class="btn btn-sm btn-outline-danger" title="Eliminar"
+                onclick="eliminarTask('{{ task.name }}')">
+                <i class="bi bi-trash"></i>
+              </button>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="card">
+  <div class="card-body text-center text-muted py-5">
+    <i class="bi bi-lightning-charge fs-2 d-block mb-2"></i>
+    No hay tasks configuradas. Creá una con el botón "+ Nueva task".
+  </div>
+</div>
+{% endif %}
+
+
+<!-- ── Modal crear / editar ───────────────────────────────────────────── -->
+<div class="modal fade" id="modalTask" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title fw-bold" id="modalTitulo">Nueva Task</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Nombre <span class="text-danger">*</span></label>
+          <input type="text" id="inputNombre" class="form-control"
+            required placeholder="refresh_ventas">
+          <div class="form-text">Identificador único de la task.</div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Tipo</label>
+          <select id="inputTipo" class="form-select">
+            <option value="tableau_cloud">tableau_cloud</option>
+          </select>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Tipo de recurso</label>
+          <select id="inputResourceType" class="form-select">
+            <option value="workbook">workbook</option>
+            <option value="datasource">datasource</option>
+          </select>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Nombre del recurso <span class="text-danger">*</span></label>
+          <input type="text" id="inputResourceName" class="form-control"
+            placeholder="Nombre exacto en Tableau Cloud">
+          <div class="form-text">Nombre del workbook o datasource tal como aparece en Tableau Cloud.</div>
+        </div>
+
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="inputEnabled" checked>
+          <label class="form-check-label" for="inputEnabled">Habilitada</label>
+        </div>
+
+      </div>
+      <div class="modal-footer">
+        <div id="errorMsg" class="text-danger small me-auto d-none"></div>
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="btnGuardar" onclick="guardarTask()">Guardar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+const modal = new bootstrap.Modal(document.getElementById('modalTask'));
+let editandoNombre = null;
+
+function abrirModalNuevo() {
+  editandoNombre = null;
+  document.getElementById('modalTitulo').textContent = 'Nueva Task';
+  document.getElementById('btnGuardar').textContent = 'Crear';
+  document.getElementById('inputNombre').value = '';
+  document.getElementById('inputTipo').value = 'tableau_cloud';
+  document.getElementById('inputResourceType').value = 'workbook';
+  document.getElementById('inputResourceName').value = '';
+  document.getElementById('inputEnabled').checked = true;
+  document.getElementById('errorMsg').classList.add('d-none');
+  modal.show();
+}
+
+function abrirModalEditar(task) {
+  editandoNombre = task.name;
+  document.getElementById('modalTitulo').textContent = 'Editar: ' + task.name;
+  document.getElementById('btnGuardar').textContent = 'Guardar cambios';
+  document.getElementById('inputNombre').value = task.name || '';
+  document.getElementById('inputTipo').value = task.type || 'tableau_cloud';
+  document.getElementById('inputResourceType').value = task.resource_type || 'workbook';
+  document.getElementById('inputResourceName').value = task.resource_name || '';
+  document.getElementById('inputEnabled').checked = task.enabled !== false;
+  document.getElementById('errorMsg').classList.add('d-none');
+  modal.show();
+}
+
+async function guardarTask() {
+  const nombre = document.getElementById('inputNombre').value.trim();
+  const resourceName = document.getElementById('inputResourceName').value.trim();
+  const errDiv = document.getElementById('errorMsg');
+
+  if (!nombre) {
+    errDiv.textContent = 'El nombre no puede estar vacío.';
+    errDiv.classList.remove('d-none');
+    return;
+  }
+  if (!resourceName) {
+    errDiv.textContent = 'El nombre del recurso no puede estar vacío.';
+    errDiv.classList.remove('d-none');
+    return;
+  }
+
+  const payload = {
+    name: nombre,
+    type: document.getElementById('inputTipo').value,
+    resource_type: document.getElementById('inputResourceType').value,
+    resource_name: resourceName,
+    enabled: document.getElementById('inputEnabled').checked,
+  };
+
+  const url = editandoNombre
+    ? `/api/tasks/${encodeURIComponent(editandoNombre)}/editar`
+    : '/api/tasks';
+
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const result = await resp.json();
+    if (!result.ok) {
+      errDiv.textContent = result.error || 'Error desconocido.';
+      errDiv.classList.remove('d-none');
+      return;
+    }
+    modal.hide();
+    location.reload();
+  } catch (e) {
+    errDiv.textContent = 'Error de red: ' + e.message;
+    errDiv.classList.remove('d-none');
+  }
+}
+
+async function eliminarTask(nombre) {
+  if (!confirm(`¿Eliminar la task "${nombre}"?`)) return;
+  try {
+    const resp = await fetch(`/api/tasks/${encodeURIComponent(nombre)}/eliminar`, { method: 'POST' });
+    const result = await resp.json();
+    if (!result.ok) { alert('Error: ' + result.error); return; }
+    location.reload();
+  } catch (e) {
+    alert('Error de red: ' + e.message);
+  }
+}
+</script>
+{% endblock %}
