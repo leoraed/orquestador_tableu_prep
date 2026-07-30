@@ -66,7 +66,7 @@
         actualizando en <span id="cuentaRegresiva">15</span>s
       </span>
     </div>
-    <div id="grafo" style="height:560px;border-radius:10px;"></div>
+    <div id="grafo" style="height:640px;border-radius:10px;"></div>
   </div>
 </div>
 
@@ -223,19 +223,16 @@ if (pipelineActual) {
 
 // ── Red ──────────────────────────────────────────────────────────────────────
 const container = document.getElementById('grafo');
+const LAYOUT_OPTS = {
+  enabled: true, direction: 'UD', sortMethod: 'directed',
+  levelSeparation: 180, nodeSpacing: 240, treeSpacing: 280,
+  blockShifting: true, edgeMinimization: true, parentCentralization: true,
+};
 const network = new vis.Network(
   container,
   { nodes: nodesDS, edges: edgesDS },
   {
-    layout: {
-      hierarchical: {
-        enabled: true,
-        direction: 'UD',
-        sortMethod: 'directed',
-        levelSeparation: 130,
-        nodeSpacing: 170,
-      },
-    },
+    layout: { hierarchical: LAYOUT_OPTS },
     physics: { enabled: false },
     interaction: { dragNodes: true, hover: true, zoomView: true, dragView: true },
     edges: { selectionWidth: 3 },
@@ -243,27 +240,28 @@ const network = new vis.Network(
 );
 
 network.once('afterDrawing', () => {
+  network.fit({ animation: false });
   network.setOptions({ layout: { hierarchical: { enabled: false } } });
 });
 
 function reordenar() {
-  network.setOptions({
-    layout: { hierarchical: { enabled: true, direction: 'UD', sortMethod: 'directed', levelSeparation: 130, nodeSpacing: 170 } },
-    physics: { enabled: false },
-  });
-  network.fit();
+  network.setOptions({ layout: { hierarchical: LAYOUT_OPTS }, physics: { enabled: false } });
+  network.fit({ animation: { duration: 300 } });
   setTimeout(() => {
     network.setOptions({ layout: { hierarchical: { enabled: false } } });
-  }, 100);
+  }, 150);
 }
 
 // ── Color de fuente al seleccionar ───────────────────────────────────────────
-network.on('selectNode', params => {
-  params.nodes.forEach(id => nodesDS.update({ id, font: { color: '#333', size: 14, bold: true } }));
-});
-network.on('deselectNode', params => {
-  (params.previousSelection?.nodes || []).forEach(id => nodesDS.update({ id, font: { color: '#fff', size: 14, bold: true } }));
-});
+function syncFontColors() {
+  const selected = new Set(network.getSelectedNodes());
+  nodesDS.getIds().forEach(id => {
+    nodesDS.update({ id, font: { color: selected.has(id) ? '#333' : '#fff', size: 14, bold: true } });
+  });
+}
+network.on('selectNode', syncFontColors);
+network.on('deselectNode', syncFontColors);
+network.on('dragEnd', syncFontColors);
 
 // ── Detalle al hacer click ────────────────────────────────────────────────────
 let flowActivo = null;
