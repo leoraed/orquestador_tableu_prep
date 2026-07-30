@@ -68,7 +68,8 @@ def _correr_tableau_cloud(
             else:
                 raise ValueError(f"Tipo de recurso desconocido: {resource_type}")
 
-        salida = f"Refresh encolado en Tableau Cloud.\nJob ID: {job.id}\nStatus inicial: {job.status}"
+        status = getattr(job, 'status', getattr(job, 'finish_code', '—'))
+        salida = f"Refresh encolado en Tableau Cloud.\nJob ID: {job.id}\nStatus: {status}"
         ejecucion.fin = datetime.utcnow()
         ejecucion.estado = "exitoso"
         ejecucion.salida = salida
