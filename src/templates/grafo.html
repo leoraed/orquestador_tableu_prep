@@ -258,6 +258,14 @@ function reordenar() {
   }, 100);
 }
 
+// ── Color de fuente al seleccionar ───────────────────────────────────────────
+network.on('selectNode', params => {
+  params.nodes.forEach(id => nodesDS.update({ id, font: { color: '#333', size: 14, bold: true } }));
+});
+network.on('deselectNode', params => {
+  (params.previousSelection?.nodes || []).forEach(id => nodesDS.update({ id, font: { color: '#fff', size: 14, bold: true } }));
+});
+
 // ── Detalle al hacer click ────────────────────────────────────────────────────
 let flowActivo = null;
 let flowActivoEsTask = false;
