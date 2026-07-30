@@ -452,6 +452,41 @@ def api_ejecutar_pipeline(nombre: str, background_tasks: BackgroundTasks):
     return _redir("/pipelines", f"Pipeline '{nombre}' iniciado manualmente.")
 
 
+@app.post("/api/pipelines/{pipeline_name}/steps/{step_name}/ejecutar")
+def api_ejecutar_step_en_pipeline(pipeline_name: str, step_name: str, background_tasks: BackgroundTasks):
+    flows_map = {f["name"]: f for f in load_flows()}
+    tasks_map = {t["name"]: t for t in load_tasks()}
+    grupo_id = str(uuid.uuid4())
+
+    if step_name in flows_map:
+        flow = flows_map[step_name]
+        background_tasks.add_task(
+            ejecutar_flow,
+            nombre=flow["name"],
+            archivo=flow["file"],
+            credenciales=flow.get("credentials"),
+            disparador="manual",
+            grupo_id=grupo_id,
+            reintentos=flow.get("reintentos", 0),
+            reintento_espera_min=flow.get("reintento_espera_min", 5),
+            pipeline_name=pipeline_name,
+        )
+    elif step_name in tasks_map:
+        from src.tasks import ejecutar_task
+        task = tasks_map[step_name]
+        background_tasks.add_task(
+            ejecutar_task,
+            task=task,
+            disparador="manual",
+            grupo_id=grupo_id,
+            pipeline_name=pipeline_name,
+        )
+    else:
+        return JSONResponse({"ok": False, "error": f"Step '{step_name}' no encontrado."})
+
+    return JSONResponse({"ok": True})
+
+
 @app.post("/api/pipelines/{pipeline_name}/flows/{flow_name}/deps")
 async def api_editar_deps_en_pipeline(pipeline_name: str, flow_name: str, request: Request):
     data = await request.json()
