@@ -705,8 +705,67 @@ def health():
 # ── Catálogo ───────────────────────────────────────────────────────────────
 
 from src.catalog.db import get_catalog_db
-from src.catalog.models import CatalogFlow, CatalogSource, CatalogField, CatalogOutput
+from src.catalog.models import CatalogFlow, CatalogSource, CatalogField, CatalogOutput, CatalogTransformation
 from src.catalog.service import parse_todas_las_carpetas, parse_and_save as catalog_parse_file
+
+
+@app.get("/catalogo")
+def pagina_catalogo(request: Request, db: Session = Depends(get_catalog_db)):
+    flows = db.query(CatalogFlow).order_by(CatalogFlow.flow_name).all()
+    total_sources = sum(len(f.sources) for f in flows)
+    total_fields = db.query(CatalogField).count()
+
+    flows_data = []
+    for f in flows:
+        source_types = list({s.source_type for s in f.sources if s.source_type})
+        flows_data.append({
+            "flow_name": f.flow_name,
+            "parsed_at": f.parsed_at,
+            "sources": f.sources,
+            "outputs": f.outputs,
+            "total_fields": sum(len(s.fields) for s in f.sources),
+            "source_types": source_types,
+        })
+
+    return templates.TemplateResponse("catalogo.html", {
+        "request": request,
+        "flows": flows_data,
+        "total_sources": total_sources,
+        "total_fields": total_fields,
+        "active": "catalogo",
+    })
+
+
+@app.get("/catalogo/{flow_name}")
+def pagina_catalogo_flow(flow_name: str, request: Request, db: Session = Depends(get_catalog_db)):
+    from fastapi import HTTPException
+    flow = db.query(CatalogFlow).filter(CatalogFlow.flow_name == flow_name).first()
+    if not flow:
+        raise HTTPException(status_code=404, detail="Flow no encontrado en el catálogo.")
+
+    flow_data = {
+        "flow_name": flow.flow_name,
+        "parsed_at": flow.parsed_at,
+        "sources": [
+            {
+                "node_name": s.node_name,
+                "source_type": s.source_type,
+                "source_table": s.source_table,
+                "file_path": s.file_path,
+                "database_name": s.database_name,
+                "fields": sorted(s.fields, key=lambda f: f.ordinal),
+            }
+            for s in flow.sources
+        ],
+        "outputs": flow.outputs,
+        "transforms": flow.transforms,
+    }
+
+    return templates.TemplateResponse("catalogo_flow.html", {
+        "request": request,
+        "flow": flow_data,
+        "active": "catalogo",
+    })
 
 
 @app.post("/api/catalog/parse")

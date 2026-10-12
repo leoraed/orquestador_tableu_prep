@@ -1,0 +1,220 @@
+{% extends "base.html" %}
+{% block content %}
+
+<!-- Breadcrumb -->
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="/catalogo" class="text-decoration-none">Catálogo</a></li>
+    <li class="breadcrumb-item active">{{ flow.flow_name }}</li>
+  </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-start mb-4">
+  <div>
+    <h5 class="fw-bold mb-0">{{ flow.flow_name }}</h5>
+    <small class="text-muted">Parseado el {{ flow.parsed_at.strftime('%d/%m/%Y %H:%M') if flow.parsed_at else '—' }}</small>
+  </div>
+</div>
+
+<!-- Linaje visual -->
+<div class="card mb-4">
+  <div class="card-header py-2">
+    <i class="bi bi-arrow-right-circle me-2 text-primary"></i>Linaje del flow
+  </div>
+  <div class="card-body">
+    <div class="d-flex align-items-start gap-3 flex-wrap">
+
+      <!-- Fuentes -->
+      <div>
+        <div class="small text-muted fw-semibold mb-2 text-uppercase" style="letter-spacing:.5px">Fuentes</div>
+        {% for s in flow.sources %}
+        <div class="border rounded p-2 mb-2" style="min-width:180px;background:#f8f9fa">
+          <div class="fw-semibold small">{{ s.node_name }}</div>
+          <div class="text-muted" style="font-size:.75rem">
+            {% if s.source_type == 'mysql' %}
+              <span class="badge" style="background:#f89820;font-size:.65rem">MySQL</span>
+            {% elif s.source_type == 'excel' %}
+              <span class="badge bg-success" style="font-size:.65rem">Excel</span>
+            {% elif s.source_type == 'googledrive' %}
+              <span class="badge" style="background:#4285f4;font-size:.65rem">Drive</span>
+            {% else %}
+              <span class="badge bg-secondary" style="font-size:.65rem">{{ s.source_type }}</span>
+            {% endif %}
+            {{ s.source_table or s.file_path or '' }}
+          </div>
+          {% if s.database_name %}
+          <div class="text-muted" style="font-size:.7rem">DB: {{ s.database_name }}</div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+
+      <!-- Flecha -->
+      <div class="d-flex align-items-center" style="padding-top:1.5rem">
+        <i class="bi bi-arrow-right fs-4 text-muted"></i>
+      </div>
+
+      <!-- Transformaciones -->
+      <div>
+        <div class="small text-muted fw-semibold mb-2 text-uppercase" style="letter-spacing:.5px">Transformaciones</div>
+        {% set tipos = flow.transforms | map(attribute='transform_type') | list | unique | list %}
+        {% for t in flow.transforms %}
+        <div class="border rounded px-2 py-1 mb-1" style="font-size:.8rem;background:#fff">
+          {% if t.transform_type == 'join' %}
+            <i class="bi bi-intersect text-primary me-1"></i>
+          {% elif t.transform_type == 'aggregate' %}
+            <i class="bi bi-calculator text-warning me-1"></i>
+          {% elif t.transform_type == 'clean' %}
+            <i class="bi bi-eraser text-success me-1"></i>
+          {% elif t.transform_type == 'simpleunion' %}
+            <i class="bi bi-union text-info me-1"></i>
+          {% else %}
+            <i class="bi bi-gear text-secondary me-1"></i>
+          {% endif %}
+          {{ t.node_name }}
+          <span class="text-muted" style="font-size:.7rem">({{ t.transform_type }})</span>
+          {% if t.transform_type == 'join' and t.details %}
+            <div class="text-muted ms-3" style="font-size:.7rem">
+              {{ t.details.get('join_type','') }}
+              {% for c in t.details.get('conditions', []) %}
+                — {{ c.get('leftExpression','') }} = {{ c.get('rightExpression','') }}
+              {% endfor %}
+            </div>
+          {% endif %}
+          {% if t.transform_type == 'aggregate' and t.details %}
+            <div class="text-muted ms-3" style="font-size:.7rem">
+              GROUP BY: {{ t.details.get('group_by', []) | join(', ') }}
+            </div>
+          {% endif %}
+        </div>
+        {% endfor %}
+        {% if not flow.transforms %}
+        <div class="text-muted small">Sin transformaciones</div>
+        {% endif %}
+      </div>
+
+      <!-- Flecha -->
+      <div class="d-flex align-items-center" style="padding-top:1.5rem">
+        <i class="bi bi-arrow-right fs-4 text-muted"></i>
+      </div>
+
+      <!-- Outputs -->
+      <div>
+        <div class="small text-muted fw-semibold mb-2 text-uppercase" style="letter-spacing:.5px">Outputs</div>
+        {% for o in flow.outputs %}
+        <div class="border rounded p-2 mb-2" style="min-width:180px;background:#e8f5e9">
+          <div class="fw-semibold small">{{ o.destination_table or o.node_name }}</div>
+          <div class="text-muted" style="font-size:.75rem">
+            <span class="badge bg-success" style="font-size:.65rem">MySQL</span>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Campos por fuente -->
+{% for s in flow.sources %}
+<div class="card mb-3">
+  <div class="card-header py-2 d-flex justify-content-between align-items-center">
+    <span>
+      <i class="bi bi-table me-2 text-secondary"></i>
+      <strong>{{ s.node_name }}</strong>
+      <span class="text-muted small ms-2">{{ s.source_table or s.file_path or '' }}</span>
+      <span class="badge bg-secondary ms-1">{{ s.fields | length }} campos</span>
+    </span>
+  </div>
+  <div class="card-body p-0">
+    <table class="table table-sm table-hover mb-0">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Campo</th>
+          <th>Tipo</th>
+          <th>Descripción</th>
+          <th>Tags</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for f in s.fields | sort(attribute='ordinal') %}
+        <tr id="row-{{ f.id }}">
+          <td class="text-muted small">{{ f.ordinal }}</td>
+          <td class="font-monospace fw-semibold small">{{ f.field_name }}</td>
+          <td><span class="badge bg-light text-dark border small">{{ f.field_type }}</span></td>
+          <td>
+            <span class="desc-text-{{ f.id }} text-muted small">{{ f.description or '—' }}</span>
+            <input class="form-control form-control-sm desc-input-{{ f.id }} d-none"
+              value="{{ f.description or '' }}" style="min-width:200px" placeholder="Descripción...">
+          </td>
+          <td>
+            <span class="tags-text-{{ f.id }} text-muted small">{{ f.tags or '—' }}</span>
+            <input class="form-control form-control-sm tags-input-{{ f.id }} d-none"
+              value="{{ f.tags or '' }}" placeholder="tag1, tag2...">
+          </td>
+          <td>
+            <button class="btn btn-sm btn-outline-secondary py-0 btn-edit-{{ f.id }}"
+              onclick="editarCampo({{ f.id }})">
+              <i class="bi bi-pencil"></i>
+            </button>
+            <button class="btn btn-sm btn-success py-0 btn-save-{{ f.id }} d-none"
+              onclick="guardarCampo({{ f.id }})">
+              <i class="bi bi-check-lg"></i>
+            </button>
+            <button class="btn btn-sm btn-outline-secondary py-0 btn-cancel-{{ f.id }} d-none"
+              onclick="cancelarEdicion({{ f.id }})">
+              <i class="bi bi-x-lg"></i>
+            </button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endfor %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function editarCampo(id) {
+  document.querySelector(`.desc-text-${id}`).classList.add('d-none');
+  document.querySelector(`.tags-text-${id}`).classList.add('d-none');
+  document.querySelector(`.desc-input-${id}`).classList.remove('d-none');
+  document.querySelector(`.tags-input-${id}`).classList.remove('d-none');
+  document.querySelector(`.btn-edit-${id}`).classList.add('d-none');
+  document.querySelector(`.btn-save-${id}`).classList.remove('d-none');
+  document.querySelector(`.btn-cancel-${id}`).classList.remove('d-none');
+}
+
+function cancelarEdicion(id) {
+  document.querySelector(`.desc-input-${id}`).classList.add('d-none');
+  document.querySelector(`.tags-input-${id}`).classList.add('d-none');
+  document.querySelector(`.desc-text-${id}`).classList.remove('d-none');
+  document.querySelector(`.tags-text-${id}`).classList.remove('d-none');
+  document.querySelector(`.btn-edit-${id}`).classList.remove('d-none');
+  document.querySelector(`.btn-save-${id}`).classList.add('d-none');
+  document.querySelector(`.btn-cancel-${id}`).classList.add('d-none');
+}
+
+function guardarCampo(id) {
+  const desc = document.querySelector(`.desc-input-${id}`).value;
+  const tags = document.querySelector(`.tags-input-${id}`).value;
+
+  fetch(`/api/catalog/fields/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ description: desc, tags: tags })
+  }).then(r => r.json()).then(data => {
+    if (data.ok) {
+      document.querySelector(`.desc-text-${id}`).textContent = desc || '—';
+      document.querySelector(`.tags-text-${id}`).textContent = tags || '—';
+      cancelarEdicion(id);
+    }
+  });
+}
+</script>
+{% endblock %}

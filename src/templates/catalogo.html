@@ -1,0 +1,205 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h5 class="fw-bold mb-0"><i class="bi bi-database me-2 text-primary"></i>Catálogo de Datos</h5>
+  <button class="btn btn-primary btn-sm" onclick="parsearCatalogo(this)">
+    <i class="bi bi-arrow-repeat me-1"></i>Parsear flows
+  </button>
+</div>
+
+<!-- Stats -->
+<div class="row g-3 mb-4">
+  <div class="col-sm-4">
+    <div class="stat-card" style="background:linear-gradient(135deg,#0f3460,#16213e)">
+      <div class="small text-white-50 mb-1">Flows parseados</div>
+      <div class="fs-3 fw-bold">{{ flows | length }}</div>
+    </div>
+  </div>
+  <div class="col-sm-4">
+    <div class="stat-card" style="background:linear-gradient(135deg,#1a5276,#21618c)">
+      <div class="small text-white-50 mb-1">Fuentes distintas</div>
+      <div class="fs-3 fw-bold">{{ total_sources }}</div>
+    </div>
+  </div>
+  <div class="col-sm-4">
+    <div class="stat-card" style="background:linear-gradient(135deg,#117a65,#1abc9c)">
+      <div class="small text-white-50 mb-1">Campos catalogados</div>
+      <div class="fs-3 fw-bold">{{ total_fields }}</div>
+    </div>
+  </div>
+</div>
+
+<!-- Buscador de campos -->
+<div class="card mb-4">
+  <div class="card-header py-2">
+    <i class="bi bi-search me-2 text-secondary"></i>Buscar campo
+  </div>
+  <div class="card-body">
+    <div class="d-flex gap-2">
+      <input type="text" id="campoBusqueda" class="form-control form-control-sm font-monospace"
+        placeholder="Nombre del campo (ej: id_cliente, monto...)" style="max-width:380px">
+      <select id="filtroTipo" class="form-select form-select-sm" style="max-width:160px">
+        <option value="">Todas las fuentes</option>
+        <option value="mysql">MySQL</option>
+        <option value="excel">Excel</option>
+        <option value="googledrive">Google Drive</option>
+        <option value="csv">CSV</option>
+        <option value="access">Access</option>
+      </select>
+      <button class="btn btn-sm btn-outline-primary" onclick="buscarCampos()">
+        <i class="bi bi-search me-1"></i>Buscar
+      </button>
+    </div>
+    <div id="resultadosBusqueda" class="mt-3" style="display:none">
+      <table class="table table-sm table-hover">
+        <thead>
+          <tr>
+            <th>Campo</th><th>Tipo</th><th>Tabla fuente</th><th>Origen</th><th>Flow</th><th>Descripción</th>
+          </tr>
+        </thead>
+        <tbody id="tbodyCampos"></tbody>
+      </table>
+      <div id="sinResultados" class="text-muted small d-none">No se encontraron campos.</div>
+    </div>
+  </div>
+</div>
+
+<!-- Lista de flows -->
+<div class="card">
+  <div class="card-header py-2">
+    <i class="bi bi-diagram-3 me-2 text-primary"></i>Flows en el catálogo
+  </div>
+  <div class="card-body p-0">
+    {% if flows %}
+    <table class="table table-hover mb-0">
+      <thead>
+        <tr>
+          <th>Flow</th>
+          <th>Fuentes</th>
+          <th>Outputs</th>
+          <th>Campos</th>
+          <th>Tipo de fuentes</th>
+          <th>Último parseo</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for f in flows %}
+        <tr>
+          <td>
+            <a href="/catalogo/{{ f.flow_name }}" class="fw-semibold text-decoration-none">
+              {{ f.flow_name }}
+            </a>
+          </td>
+          <td><span class="badge bg-secondary">{{ f.sources | length }}</span></td>
+          <td><span class="badge bg-info text-dark">{{ f.outputs | length }}</span></td>
+          <td>{{ f.total_fields }}</td>
+          <td>
+            {% for st in f.source_types %}
+              {% if st == 'mysql' %}
+                <span class="badge" style="background:#f89820">MySQL</span>
+              {% elif st == 'excel' %}
+                <span class="badge bg-success">Excel</span>
+              {% elif st == 'googledrive' %}
+                <span class="badge" style="background:#4285f4">Drive</span>
+              {% elif st == 'access' %}
+                <span class="badge bg-secondary">Access</span>
+              {% elif st == 'csv' or st == 'textscan' %}
+                <span class="badge bg-secondary">CSV</span>
+              {% else %}
+                <span class="badge bg-secondary">{{ st }}</span>
+              {% endif %}
+            {% endfor %}
+          </td>
+          <td class="text-muted small">{{ f.parsed_at.strftime('%d/%m/%Y %H:%M') if f.parsed_at else '—' }}</td>
+          <td>
+            <a href="/catalogo/{{ f.flow_name }}" class="btn btn-sm btn-outline-primary py-0">
+              <i class="bi bi-eye me-1"></i>Ver
+            </a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="text-muted p-4 text-center">
+      <i class="bi bi-inbox fs-2 d-block mb-2"></i>
+      No hay flows en el catálogo todavía.<br>
+      <small>Asegurate de tener carpetas configuradas y hacé clic en <strong>Parsear flows</strong>.</small>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Toast de feedback -->
+<div class="position-fixed bottom-0 end-0 p-3" style="z-index:9999">
+  <div id="toastParse" class="toast align-items-center text-bg-primary border-0" role="alert">
+    <div class="d-flex">
+      <div class="toast-body" id="toastMsg">Parseando flows en background...</div>
+      <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function parsearCatalogo(btn) {
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Parseando...';
+  fetch('/api/catalog/parse', { method: 'POST' })
+    .then(r => r.json())
+    .then(data => {
+      const toast = new bootstrap.Toast(document.getElementById('toastParse'));
+      document.getElementById('toastMsg').textContent = data.mensaje || 'Parseo iniciado.';
+      toast.show();
+      setTimeout(() => location.reload(), 4000);
+    })
+    .catch(() => { btn.disabled = false; btn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>Parsear flows'; });
+}
+
+function buscarCampos() {
+  const q = document.getElementById('campoBusqueda').value.trim();
+  const tipo = document.getElementById('filtroTipo').value;
+  if (!q && !tipo) return;
+
+  const params = new URLSearchParams();
+  if (q) params.set('q', q);
+  if (tipo) params.set('source_type', tipo);
+
+  fetch('/api/catalog/fields?' + params)
+    .then(r => r.json())
+    .then(fields => {
+      const tbody = document.getElementById('tbodyCampos');
+      const sinRes = document.getElementById('sinResultados');
+      tbody.innerHTML = '';
+      document.getElementById('resultadosBusqueda').style.display = 'block';
+
+      if (!fields.length) {
+        sinRes.classList.remove('d-none');
+        return;
+      }
+      sinRes.classList.add('d-none');
+
+      fields.forEach(f => {
+        const flowName = '—';
+        tbody.innerHTML += `
+          <tr>
+            <td class="font-monospace fw-semibold">${f.field_name}</td>
+            <td><span class="badge bg-secondary">${f.field_type}</span></td>
+            <td class="text-muted small">${f.source_table || '—'}</td>
+            <td><span class="badge bg-light text-dark border">${f.source_type || '—'}</span></td>
+            <td><a href="/catalogo/flow_id_${f.flow_id}" class="small text-decoration-none">ver flow</a></td>
+            <td class="text-muted small">${f.description || '<em class="text-muted">sin descripción</em>'}</td>
+          </tr>`;
+      });
+    });
+}
+
+document.getElementById('campoBusqueda').addEventListener('keydown', e => {
+  if (e.key === 'Enter') buscarCampos();
+});
+</script>
+{% endblock %}
