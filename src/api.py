@@ -889,3 +889,172 @@ async def api_catalog_field_enriquecer(field_id: int, request: Request, db: Sess
         field.tags = data["tags"]
     db.commit()
     return {"ok": True}
+
+
+# ── Modelos Semánticos ─────────────────────────────────────────────────────
+
+from datetime import datetime as _dt
+import yaml as _yaml
+from fastapi.responses import Response
+from src.catalog.models_semantic import SemanticModel, SemanticEntity, SemanticDimension, SemanticMetric
+from src.catalog.models import CatalogOutput
+
+
+def _modelo_to_dict(m: SemanticModel) -> dict:
+    return {
+        "name": m.name,
+        "description": m.description or "",
+        "entities": [
+            {
+                "name": e.name,
+                "description": e.description or "",
+                "base_table": e.base_table,
+                "joins": e.joins or [],
+                "dimensions": [
+                    {"name": d.name, "expression": d.expression,
+                     "data_type": d.data_type or "string", "description": d.description or ""}
+                    for d in e.dimensions
+                ],
+                "metrics": [
+                    {"name": mt.name, "expression": mt.expression,
+                     "format": mt.format or "number", "description": mt.description or ""}
+                    for mt in e.metrics
+                ],
+            }
+            for e in m.entities
+        ],
+    }
+
+
+def _save_entities(modelo: SemanticModel, entities_data: list, db: Session):
+    for e_data in entities_data:
+        entity = SemanticEntity(
+            model_id=modelo.id,
+            name=(e_data.get("name") or "").strip(),
+            description=(e_data.get("description") or "").strip() or None,
+            base_table=(e_data.get("base_table") or "").strip(),
+            joins=e_data.get("joins") or [],
+        )
+        db.add(entity)
+        db.flush()
+        for d in e_data.get("dimensions") or []:
+            db.add(SemanticDimension(
+                entity_id=entity.id,
+                name=(d.get("name") or "").strip(),
+                expression=(d.get("expression") or "").strip(),
+                data_type=d.get("data_type") or "string",
+                description=(d.get("description") or "").strip() or None,
+            ))
+        for mt in e_data.get("metrics") or []:
+            db.add(SemanticMetric(
+                entity_id=entity.id,
+                name=(mt.get("name") or "").strip(),
+                expression=(mt.get("expression") or "").strip(),
+                format=mt.get("format") or "number",
+                description=(mt.get("description") or "").strip() or None,
+            ))
+
+
+@app.get("/modelos")
+def pagina_modelos(request: Request, db: Session = Depends(get_catalog_db)):
+    modelos = db.query(SemanticModel).order_by(SemanticModel.name).all()
+    total_entidades = sum(len(m.entities) for m in modelos)
+    total_metricas = sum(len(e.metrics) for m in modelos for e in m.entities)
+    modelos_data = []
+    for m in modelos:
+        modelos_data.append({
+            **m.__dict__,
+            "entities": m.entities,
+            "total_dims": sum(len(e.dimensions) for e in m.entities),
+            "total_metrics": sum(len(e.metrics) for e in m.entities),
+        })
+    return templates.TemplateResponse("modelos.html", {
+        "request": request,
+        "modelos": modelos_data,
+        "total_entidades": total_entidades,
+        "total_metricas": total_metricas,
+        "active": "modelos",
+    })
+
+
+@app.get("/modelos/{nombre}")
+def pagina_modelo_editor(nombre: str, request: Request, db: Session = Depends(get_catalog_db)):
+    from fastapi import HTTPException
+    modelo = db.query(SemanticModel).filter(SemanticModel.name == nombre).first()
+    if not modelo:
+        raise HTTPException(status_code=404, detail="Modelo no encontrado.")
+    tablas = [r[0] for r in db.query(CatalogOutput.destination_table)
+              .filter(CatalogOutput.destination_table.isnot(None))
+              .distinct().order_by(CatalogOutput.destination_table).all()]
+    return templates.TemplateResponse("modelos_editor.html", {
+        "request": request,
+        "modelo": modelo,
+        "tablas_catalogo": tablas,
+        "estado_inicial": _modelo_to_dict(modelo),
+        "active": "modelos",
+    })
+
+
+@app.post("/api/modelos")
+async def api_crear_modelo(request: Request, db: Session = Depends(get_catalog_db)):
+    data = await request.json()
+    nombre = (data.get("name") or "").strip()
+    if not nombre:
+        return JSONResponse({"ok": False, "error": "El nombre es obligatorio."})
+    if db.query(SemanticModel).filter(SemanticModel.name == nombre).first():
+        return JSONResponse({"ok": False, "error": f"Ya existe un modelo '{nombre}'."})
+    modelo = SemanticModel(
+        name=nombre,
+        description=(data.get("description") or "").strip() or None,
+        created_at=_dt.utcnow(),
+        updated_at=_dt.utcnow(),
+    )
+    db.add(modelo)
+    db.commit()
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/modelos/{nombre}/editar")
+async def api_editar_modelo(nombre: str, request: Request, db: Session = Depends(get_catalog_db)):
+    from fastapi import HTTPException
+    data = await request.json()
+    modelo = db.query(SemanticModel).filter(SemanticModel.name == nombre).first()
+    if not modelo:
+        raise HTTPException(status_code=404, detail="Modelo no encontrado.")
+    modelo.name = (data.get("name") or nombre).strip()
+    modelo.description = (data.get("description") or "").strip() or None
+    modelo.updated_at = _dt.utcnow()
+    for e in list(modelo.entities):
+        db.delete(e)
+    db.flush()
+    _save_entities(modelo, data.get("entities") or [], db)
+    db.commit()
+    db.refresh(modelo)
+    return JSONResponse({"ok": True, "modelo": _modelo_to_dict(modelo)})
+
+
+@app.post("/api/modelos/{nombre}/eliminar")
+def api_eliminar_modelo(nombre: str, db: Session = Depends(get_catalog_db)):
+    modelo = db.query(SemanticModel).filter(SemanticModel.name == nombre).first()
+    if not modelo:
+        return JSONResponse({"ok": False, "error": "Modelo no encontrado."})
+    db.delete(modelo)
+    db.commit()
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/modelos/{nombre}/yaml")
+def api_exportar_yaml(nombre: str, db: Session = Depends(get_catalog_db)):
+    from fastapi import HTTPException
+    modelo = db.query(SemanticModel).filter(SemanticModel.name == nombre).first()
+    if not modelo:
+        raise HTTPException(status_code=404, detail="Modelo no encontrado.")
+    content = _yaml.dump(
+        _modelo_to_dict(modelo),
+        allow_unicode=True, default_flow_style=False, sort_keys=False
+    )
+    return Response(
+        content=content,
+        media_type="text/yaml",
+        headers={"Content-Disposition": f"attachment; filename={nombre}.yaml"},
+    )

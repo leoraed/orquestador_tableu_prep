@@ -1,0 +1,384 @@
+{% extends "base.html" %}
+{% block content %}
+
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="/modelos" class="text-decoration-none">Modelos</a></li>
+    <li class="breadcrumb-item active" id="breadcrumbNombre">{{ modelo.name }}</li>
+  </ol>
+</nav>
+
+<!-- Header -->
+<div class="card mb-4">
+  <div class="card-body py-3">
+    <div class="row g-3 align-items-center">
+      <div class="col-md-4">
+        <label class="form-label small fw-semibold mb-1">Nombre del modelo</label>
+        <input type="text" id="modelName" class="form-control" value="{{ modelo.name }}">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label small fw-semibold mb-1">Descripción</label>
+        <input type="text" id="modelDesc" class="form-control" value="{{ modelo.description or '' }}"
+          placeholder="Descripción del modelo...">
+      </div>
+      <div class="col-md-2 d-flex gap-2 align-items-end">
+        <button class="btn btn-primary btn-sm w-100" onclick="guardarModelo()">
+          <i class="bi bi-check-lg me-1"></i>Guardar
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Entidades -->
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h6 class="fw-bold mb-0">Entidades</h6>
+  <button class="btn btn-outline-primary btn-sm" onclick="agregarEntidad()">
+    <i class="bi bi-plus-lg me-1"></i>Agregar entidad
+  </button>
+</div>
+
+<div id="entidadesContainer"></div>
+
+<!-- Toast -->
+<div class="position-fixed bottom-0 end-0 p-3" style="z-index:9999">
+  <div id="toastGuardado" class="toast align-items-center border-0" role="alert">
+    <div class="d-flex">
+      <div class="toast-body" id="toastMsg">Guardado.</div>
+      <button type="button" class="btn-close me-2 m-auto" data-bs-dismiss="toast"></button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: agregar entidad -->
+<div class="modal fade" id="modalEntidad" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title fw-bold" id="modalEntidadTitulo">Nueva entidad</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-3 mb-3">
+          <div class="col-md-5">
+            <label class="form-label small fw-semibold">Nombre de la entidad *</label>
+            <input type="text" id="entNombre" class="form-control" placeholder="ej: Llamadas">
+          </div>
+          <div class="col-md-7">
+            <label class="form-label small fw-semibold">Descripción</label>
+            <input type="text" id="entDesc" class="form-control" placeholder="ej: Llamadas de soporte técnico">
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label small fw-semibold">Tabla base *</label>
+          <input type="text" id="entTabla" class="form-control font-monospace"
+            placeholder="ej: stagedata_noc_link" list="tablasSugeridas">
+          <datalist id="tablasSugeridas">
+            {% for t in tablas_catalogo %}
+            <option value="{{ t }}">
+            {% endfor %}
+          </datalist>
+          <div class="form-text">Escribí el nombre de la tabla principal de esta entidad.</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+        <button class="btn btn-primary btn-sm" onclick="confirmarEntidad()">Agregar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ── Estado del modelo ──────────────────────────────────────────────────────
+let state = {{ estado_inicial | tojson }};
+let entidadEditandoIdx = null;
+
+// ── Render ─────────────────────────────────────────────────────────────────
+function render() {
+  const c = document.getElementById('entidadesContainer');
+  if (!state.entities.length) {
+    c.innerHTML = `<div class="text-muted text-center p-4 border rounded">
+      <i class="bi bi-box fs-2 d-block mb-2"></i>
+      No hay entidades. Hacé clic en <strong>Agregar entidad</strong>.
+    </div>`;
+    return;
+  }
+  c.innerHTML = state.entities.map((e, i) => renderEntidad(e, i)).join('');
+}
+
+function renderEntidad(e, i) {
+  const joins = (e.joins || []).map((j, ji) => `
+    <tr>
+      <td class="font-monospace small">${j.table}</td>
+      <td class="small">${j.alias}</td>
+      <td class="font-monospace small" style="max-width:300px;word-break:break-all">${j.on}</td>
+      <td><span class="badge bg-secondary">${j.type}</span></td>
+      <td><button class="btn btn-sm btn-link text-danger p-0" onclick="eliminarJoin(${i},${ji})"><i class="bi bi-x-lg"></i></button></td>
+    </tr>`).join('');
+
+  const dims = (e.dimensions || []).map((d, di) => `
+    <tr>
+      <td class="font-monospace small fw-semibold">${d.name}</td>
+      <td><code class="small">${d.expression}</code></td>
+      <td><span class="badge bg-light text-dark border">${d.data_type || 'string'}</span></td>
+      <td class="text-muted small">${d.description || '—'}</td>
+      <td><button class="btn btn-sm btn-link text-danger p-0" onclick="eliminarDimension(${i},${di})"><i class="bi bi-x-lg"></i></button></td>
+    </tr>`).join('');
+
+  const mets = (e.metrics || []).map((m, mi) => `
+    <tr>
+      <td class="font-monospace small fw-semibold">${m.name}</td>
+      <td><code class="small">${m.expression}</code></td>
+      <td><span class="badge ${m.format === 'percent' ? 'bg-warning text-dark' : m.format === 'currency' ? 'bg-success' : 'bg-primary'}">${m.format || 'number'}</span></td>
+      <td class="text-muted small">${m.description || '—'}</td>
+      <td><button class="btn btn-sm btn-link text-danger p-0" onclick="eliminarMetrica(${i},${mi})"><i class="bi bi-x-lg"></i></button></td>
+    </tr>`).join('');
+
+  return `
+  <div class="card mb-3">
+    <div class="card-header py-2 d-flex justify-content-between align-items-center">
+      <div>
+        <i class="bi bi-box me-2 text-primary"></i>
+        <strong>${e.name}</strong>
+        <span class="text-muted small ms-2">→ <code>${e.base_table}</code></span>
+        ${e.description ? `<span class="text-muted small ms-2">· ${e.description}</span>` : ''}
+      </div>
+      <button class="btn btn-sm btn-link text-danger py-0" onclick="eliminarEntidad(${i})">
+        <i class="bi bi-trash"></i>
+      </button>
+    </div>
+    <div class="card-body p-3">
+
+      <!-- Joins -->
+      <div class="mb-3">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <span class="small fw-semibold text-muted text-uppercase" style="letter-spacing:.5px">Joins</span>
+          <button class="btn btn-outline-secondary btn-sm py-0" onclick="mostrarFormJoin(${i})">
+            <i class="bi bi-plus-lg me-1"></i>Agregar join
+          </button>
+        </div>
+        ${e.joins && e.joins.length ? `
+        <table class="table table-sm mb-0">
+          <thead><tr><th>Tabla</th><th>Alias</th><th>ON</th><th>Tipo</th><th></th></tr></thead>
+          <tbody>${joins}</tbody>
+        </table>` : '<div class="text-muted small fst-italic">Sin joins.</div>'}
+        <div id="formJoin-${i}" class="d-none mt-2 p-3 border rounded bg-light">
+          <div class="row g-2">
+            <div class="col-md-4">
+              <input class="form-control form-control-sm font-monospace" id="jTabla-${i}" placeholder="Tabla" list="tablasSugeridas">
+            </div>
+            <div class="col-md-2">
+              <input class="form-control form-control-sm" id="jAlias-${i}" placeholder="Alias">
+            </div>
+            <div class="col-md-4">
+              <input class="form-control form-control-sm font-monospace" id="jOn-${i}" placeholder="ON: t1.campo = t2.campo">
+            </div>
+            <div class="col-md-2">
+              <select class="form-select form-select-sm" id="jTipo-${i}">
+                <option value="left">LEFT</option>
+                <option value="inner">INNER</option>
+                <option value="right">RIGHT</option>
+              </select>
+            </div>
+          </div>
+          <div class="mt-2 d-flex gap-2">
+            <button class="btn btn-sm btn-primary" onclick="agregarJoin(${i})">Agregar</button>
+            <button class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('formJoin-${i}').classList.add('d-none')">Cancelar</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Dimensiones -->
+      <div class="mb-3">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <span class="small fw-semibold text-muted text-uppercase" style="letter-spacing:.5px">Dimensiones</span>
+          <button class="btn btn-outline-secondary btn-sm py-0" onclick="mostrarFormDim(${i})">
+            <i class="bi bi-plus-lg me-1"></i>Agregar dimensión
+          </button>
+        </div>
+        ${e.dimensions && e.dimensions.length ? `
+        <table class="table table-sm mb-0">
+          <thead><tr><th>Nombre</th><th>Expresión</th><th>Tipo</th><th>Descripción</th><th></th></tr></thead>
+          <tbody>${dims}</tbody>
+        </table>` : '<div class="text-muted small fst-italic">Sin dimensiones.</div>'}
+        <div id="formDim-${i}" class="d-none mt-2 p-3 border rounded bg-light">
+          <div class="row g-2">
+            <div class="col-md-3">
+              <input class="form-control form-control-sm font-monospace" id="dNombre-${i}" placeholder="nombre_dimension">
+            </div>
+            <div class="col-md-4">
+              <input class="form-control form-control-sm font-monospace" id="dExpr-${i}" placeholder="ej: DATE_FORMAT(fecha,'%Y-%m')">
+            </div>
+            <div class="col-md-2">
+              <select class="form-select form-select-sm" id="dTipo-${i}">
+                <option value="string">string</option>
+                <option value="date">date</option>
+                <option value="integer">integer</option>
+                <option value="float">float</option>
+                <option value="boolean">boolean</option>
+              </select>
+            </div>
+            <div class="col-md-3">
+              <input class="form-control form-control-sm" id="dDesc-${i}" placeholder="Descripción">
+            </div>
+          </div>
+          <div class="mt-2 d-flex gap-2">
+            <button class="btn btn-sm btn-primary" onclick="agregarDimension(${i})">Agregar</button>
+            <button class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('formDim-${i}').classList.add('d-none')">Cancelar</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Métricas -->
+      <div>
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <span class="small fw-semibold text-muted text-uppercase" style="letter-spacing:.5px">Métricas</span>
+          <button class="btn btn-outline-secondary btn-sm py-0" onclick="mostrarFormMetrica(${i})">
+            <i class="bi bi-plus-lg me-1"></i>Agregar métrica
+          </button>
+        </div>
+        ${e.metrics && e.metrics.length ? `
+        <table class="table table-sm mb-0">
+          <thead><tr><th>Nombre</th><th>Expresión</th><th>Formato</th><th>Descripción</th><th></th></tr></thead>
+          <tbody>${mets}</tbody>
+        </table>` : '<div class="text-muted small fst-italic">Sin métricas.</div>'}
+        <div id="formMet-${i}" class="d-none mt-2 p-3 border rounded bg-light">
+          <div class="row g-2">
+            <div class="col-md-3">
+              <input class="form-control form-control-sm font-monospace" id="mNombre-${i}" placeholder="nombre_metrica">
+            </div>
+            <div class="col-md-5">
+              <input class="form-control form-control-sm font-monospace" id="mExpr-${i}" placeholder="ej: COUNT(*) o SUM(monto)">
+            </div>
+            <div class="col-md-2">
+              <select class="form-select form-select-sm" id="mFormato-${i}">
+                <option value="number">number</option>
+                <option value="percent">percent</option>
+                <option value="currency">currency</option>
+              </select>
+            </div>
+            <div class="col-md-2">
+              <input class="form-control form-control-sm" id="mDesc-${i}" placeholder="Descripción">
+            </div>
+          </div>
+          <div class="mt-2 d-flex gap-2">
+            <button class="btn btn-sm btn-primary" onclick="agregarMetrica(${i})">Agregar</button>
+            <button class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('formMet-${i}').classList.add('d-none')">Cancelar</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>`;
+}
+
+// ── Entidades ──────────────────────────────────────────────────────────────
+function agregarEntidad() {
+  entidadEditandoIdx = null;
+  document.getElementById('entNombre').value = '';
+  document.getElementById('entDesc').value = '';
+  document.getElementById('entTabla').value = '';
+  document.getElementById('modalEntidadTitulo').textContent = 'Nueva entidad';
+  new bootstrap.Modal(document.getElementById('modalEntidad')).show();
+}
+
+function confirmarEntidad() {
+  const name = document.getElementById('entNombre').value.trim();
+  const desc = document.getElementById('entDesc').value.trim();
+  const tabla = document.getElementById('entTabla').value.trim();
+  if (!name || !tabla) { alert('Nombre y tabla base son obligatorios.'); return; }
+  state.entities.push({ name, description: desc, base_table: tabla, joins: [], dimensions: [], metrics: [] });
+  bootstrap.Modal.getInstance(document.getElementById('modalEntidad')).hide();
+  render();
+}
+
+function eliminarEntidad(i) {
+  if (!confirm(`¿Eliminar la entidad "${state.entities[i].name}"?`)) return;
+  state.entities.splice(i, 1);
+  render();
+}
+
+// ── Joins ──────────────────────────────────────────────────────────────────
+function mostrarFormJoin(i) { document.getElementById(`formJoin-${i}`).classList.remove('d-none'); }
+
+function agregarJoin(i) {
+  const tabla = document.getElementById(`jTabla-${i}`).value.trim();
+  const alias = document.getElementById(`jAlias-${i}`).value.trim();
+  const on = document.getElementById(`jOn-${i}`).value.trim();
+  const tipo = document.getElementById(`jTipo-${i}`).value;
+  if (!tabla || !on) { alert('Tabla y condición ON son obligatorias.'); return; }
+  state.entities[i].joins = state.entities[i].joins || [];
+  state.entities[i].joins.push({ table: tabla, alias: alias || tabla, on, type: tipo });
+  render();
+}
+
+function eliminarJoin(i, ji) { state.entities[i].joins.splice(ji, 1); render(); }
+
+// ── Dimensiones ────────────────────────────────────────────────────────────
+function mostrarFormDim(i) { document.getElementById(`formDim-${i}`).classList.remove('d-none'); }
+
+function agregarDimension(i) {
+  const name = document.getElementById(`dNombre-${i}`).value.trim();
+  const expr = document.getElementById(`dExpr-${i}`).value.trim();
+  const tipo = document.getElementById(`dTipo-${i}`).value;
+  const desc = document.getElementById(`dDesc-${i}`).value.trim();
+  if (!name || !expr) { alert('Nombre y expresión son obligatorios.'); return; }
+  state.entities[i].dimensions = state.entities[i].dimensions || [];
+  state.entities[i].dimensions.push({ name, expression: expr, data_type: tipo, description: desc });
+  render();
+}
+
+function eliminarDimension(i, di) { state.entities[i].dimensions.splice(di, 1); render(); }
+
+// ── Métricas ───────────────────────────────────────────────────────────────
+function mostrarFormMetrica(i) { document.getElementById(`formMet-${i}`).classList.remove('d-none'); }
+
+function agregarMetrica(i) {
+  const name = document.getElementById(`mNombre-${i}`).value.trim();
+  const expr = document.getElementById(`mExpr-${i}`).value.trim();
+  const fmt = document.getElementById(`mFormato-${i}`).value;
+  const desc = document.getElementById(`mDesc-${i}`).value.trim();
+  if (!name || !expr) { alert('Nombre y expresión son obligatorios.'); return; }
+  state.entities[i].metrics = state.entities[i].metrics || [];
+  state.entities[i].metrics.push({ name, expression: expr, format: fmt, description: desc });
+  render();
+}
+
+function eliminarMetrica(i, mi) { state.entities[i].metrics.splice(mi, 1); render(); }
+
+// ── Guardar ────────────────────────────────────────────────────────────────
+function guardarModelo() {
+  const payload = {
+    name: document.getElementById('modelName').value.trim(),
+    description: document.getElementById('modelDesc').value.trim(),
+    entities: state.entities,
+  };
+  fetch(`/api/modelos/{{ modelo.name }}/editar`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }).then(r => r.json()).then(data => {
+    const toast = document.getElementById('toastGuardado');
+    if (data.ok) {
+      toast.classList.remove('text-bg-danger');
+      toast.classList.add('text-bg-success');
+      document.getElementById('toastMsg').textContent = 'Modelo guardado correctamente.';
+      state = data.modelo;
+      render();
+    } else {
+      toast.classList.remove('text-bg-success');
+      toast.classList.add('text-bg-danger');
+      document.getElementById('toastMsg').textContent = 'Error: ' + data.error;
+    }
+    new bootstrap.Toast(toast).show();
+  });
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────
+render();
+</script>
+{% endblock %}
