@@ -18,9 +18,12 @@ logging.basicConfig(
 
 from src.database import engine, Base
 from src import models  # registra los modelos en Base
+from src.catalog.db import engine_catalog
+from src.catalog import models as catalog_models  # registra modelos del catálogo
 from sqlalchemy import text
 
 Base.metadata.create_all(bind=engine)
+catalog_models.BaseCatalog.metadata.create_all(bind=engine_catalog)
 
 # Migración: agregar columnas nuevas si no existen (SQLite no soporta IF NOT EXISTS en ALTER)
 with engine.connect() as conn:

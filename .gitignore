@@ -17,3 +17,16 @@ config/flows.yaml
 
 # Variables de entorno
 .env
+
+# Archivos de flows reales (se configuran por servidor)
+flows/*.tfl
+
+# Archivos temporales y de error de JVM
+hs_err_pid*.log
+tmp/
+
+# Worktrees de Claude
+.claude/worktrees/
+
+# Configs locales extras
+config/flows_.yaml

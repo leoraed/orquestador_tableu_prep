@@ -700,3 +700,131 @@ def api_ejecucion_detalle(eid: int, db: Session = Depends(get_db)):
 @app.get("/health")
 def health():
     return {"estado": "ok", "timestamp": datetime.utcnow().isoformat()}
+
+
+# ── Catálogo ───────────────────────────────────────────────────────────────
+
+from src.catalog.db import get_catalog_db
+from src.catalog.models import CatalogFlow, CatalogSource, CatalogField, CatalogOutput
+from src.catalog.service import parse_todas_las_carpetas, parse_and_save as catalog_parse_file
+
+
+@app.post("/api/catalog/parse")
+def api_catalog_parse(background_tasks: BackgroundTasks):
+    carpetas = load_carpetas()
+    if not carpetas:
+        return JSONResponse({"ok": False, "error": "No hay carpetas configuradas."})
+
+    def _run():
+        db = next(get_catalog_db())
+        try:
+            results = parse_todas_las_carpetas(carpetas, db)
+            logger.info(f"Catálogo: {len(results)} archivos procesados.")
+        finally:
+            db.close()
+
+    background_tasks.add_task(_run)
+    return JSONResponse({"ok": True, "mensaje": f"Parseando {len(carpetas)} carpeta(s) en background."})
+
+
+@app.get("/api/catalog/flows")
+def api_catalog_flows(db: Session = Depends(get_catalog_db)):
+    flows = db.query(CatalogFlow).order_by(CatalogFlow.flow_name).all()
+    return [
+        {
+            "id": f.id,
+            "flow_name": f.flow_name,
+            "file_path": f.file_path,
+            "parsed_at": f.parsed_at.isoformat() if f.parsed_at else None,
+            "sources": len(f.sources),
+            "outputs": len(f.outputs),
+        }
+        for f in flows
+    ]
+
+
+@app.get("/api/catalog/flows/{flow_name}")
+def api_catalog_flow_detalle(flow_name: str, db: Session = Depends(get_catalog_db)):
+    from fastapi import HTTPException
+    flow = db.query(CatalogFlow).filter(CatalogFlow.flow_name == flow_name).first()
+    if not flow:
+        raise HTTPException(status_code=404, detail="Flow no encontrado en el catálogo.")
+    return {
+        "id": flow.id,
+        "flow_name": flow.flow_name,
+        "file_path": flow.file_path,
+        "parsed_at": flow.parsed_at.isoformat() if flow.parsed_at else None,
+        "sources": [
+            {
+                "id": s.id,
+                "node_name": s.node_name,
+                "source_type": s.source_type,
+                "source_table": s.source_table,
+                "server": s.server,
+                "database_name": s.database_name,
+                "file_path": s.file_path,
+                "fields": [
+                    {
+                        "id": f.id,
+                        "name": f.field_name,
+                        "type": f.field_type,
+                        "ordinal": f.ordinal,
+                        "description": f.description,
+                        "tags": f.tags,
+                    }
+                    for f in s.fields
+                ],
+            }
+            for s in flow.sources
+        ],
+        "outputs": [
+            {"node_name": o.node_name, "destination_table": o.destination_table}
+            for o in flow.outputs
+        ],
+        "transforms": [
+            {"name": t.node_name, "type": t.transform_type, "details": t.details}
+            for t in flow.transforms
+        ],
+    }
+
+
+@app.get("/api/catalog/fields")
+def api_catalog_fields(
+    q: str = None,
+    source_type: str = None,
+    db: Session = Depends(get_catalog_db),
+):
+    query = db.query(CatalogField)
+    if q:
+        query = query.filter(CatalogField.field_name.ilike(f"%{q}%"))
+    if source_type:
+        query = query.join(CatalogSource).filter(CatalogSource.source_type == source_type)
+    fields = query.limit(500).all()
+    return [
+        {
+            "id": f.id,
+            "flow_id": f.flow_id,
+            "field_name": f.field_name,
+            "field_type": f.field_type,
+            "description": f.description,
+            "tags": f.tags,
+            "source_table": f.source.source_table if f.source else None,
+            "source_type": f.source.source_type if f.source else None,
+        }
+        for f in fields
+    ]
+
+
+@app.patch("/api/catalog/fields/{field_id}")
+async def api_catalog_field_enriquecer(field_id: int, request: Request, db: Session = Depends(get_catalog_db)):
+    from fastapi import HTTPException
+    data = await request.json()
+    field = db.query(CatalogField).filter(CatalogField.id == field_id).first()
+    if not field:
+        raise HTTPException(status_code=404, detail="Campo no encontrado.")
+    if "description" in data:
+        field.description = data["description"]
+    if "tags" in data:
+        field.tags = data["tags"]
+    db.commit()
+    return {"ok": True}
