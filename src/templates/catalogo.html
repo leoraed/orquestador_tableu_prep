@@ -191,7 +191,7 @@ function buscarCampos() {
             <td><span class="badge bg-secondary">${f.field_type}</span></td>
             <td class="text-muted small">${f.source_table || '—'}</td>
             <td><span class="badge bg-light text-dark border">${f.source_type || '—'}</span></td>
-            <td><a href="/catalogo/flow_id_${f.flow_id}" class="small text-decoration-none">ver flow</a></td>
+            <td><a href="/catalogo/${f.flow_name}" class="small text-decoration-none">${f.flow_name || '—'}</a></td>
             <td class="text-muted small">${f.description || '<em class="text-muted">sin descripción</em>'}</td>
           </tr>`;
       });

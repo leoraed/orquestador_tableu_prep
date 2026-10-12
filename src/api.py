@@ -864,6 +864,7 @@ def api_catalog_fields(
         {
             "id": f.id,
             "flow_id": f.flow_id,
+            "flow_name": f.source.flow.flow_name if f.source and f.source.flow else None,
             "field_name": f.field_name,
             "field_type": f.field_type,
             "description": f.description,
