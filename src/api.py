@@ -8,7 +8,7 @@ import yaml
 
 import uuid
 from typing import List
-from fastapi import FastAPI, Depends, BackgroundTasks, Request, Form
+from fastapi import FastAPI, Depends, BackgroundTasks, Request, Form, UploadFile, File
 from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
@@ -1058,3 +1058,64 @@ def api_exportar_yaml(nombre: str, db: Session = Depends(get_catalog_db)):
         media_type="text/yaml",
         headers={"Content-Disposition": f"attachment; filename={nombre}.yaml"},
     )
+
+
+@app.post("/api/modelos/importar-twb")
+async def api_importar_twb(file: UploadFile = File(...), db: Session = Depends(get_catalog_db)):
+    from src.catalog.twb_parser import parse_twb
+
+    content = await file.read()
+    try:
+        datasources = parse_twb(content)
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)})
+
+    created: list[str] = []
+    skipped: list[str] = []
+
+    for ds in datasources:
+        if db.query(SemanticModel).filter(SemanticModel.name == ds.model_name).first():
+            skipped.append(ds.model_name)
+            continue
+
+        modelo = SemanticModel(
+            name=ds.model_name,
+            description=ds.description,
+            updated_at=_dt.utcnow(),
+        )
+        db.add(modelo)
+        db.flush()
+
+        joins = [{"table": t, "on": "", "type": "LEFT"} for t in ds.join_tables]
+        entity = SemanticEntity(
+            model_id=modelo.id,
+            name=ds.caption,
+            description=ds.description,
+            base_table=ds.base_table,
+            joins=joins,
+        )
+        db.add(entity)
+        db.flush()
+
+        for dim in ds.dimensions:
+            db.add(SemanticDimension(
+                entity_id=entity.id,
+                name=dim["name"],
+                description=dim["description"] or None,
+                expression=dim["expression"],
+                data_type=dim["data_type"] or "string",
+            ))
+
+        for met in ds.metrics:
+            db.add(SemanticMetric(
+                entity_id=entity.id,
+                name=met["name"],
+                description=met["description"] or None,
+                expression=met["expression"],
+                format=met["format"] or "number",
+            ))
+
+        db.commit()
+        created.append(ds.model_name)
+
+    return JSONResponse({"ok": bool(created), "created": created, "skipped": skipped})

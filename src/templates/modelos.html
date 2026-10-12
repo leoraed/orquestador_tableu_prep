@@ -3,9 +3,14 @@
 
 <div class="d-flex justify-content-between align-items-center mb-4">
   <h5 class="fw-bold mb-0"><i class="bi bi-layers me-2 text-primary"></i>Modelos Semánticos</h5>
-  <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#modalCrear">
-    <i class="bi bi-plus-lg me-1"></i>Nuevo modelo
-  </button>
+  <div class="d-flex gap-2">
+    <button class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#modalImportar">
+      <i class="bi bi-upload me-1"></i>Importar TWB
+    </button>
+    <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#modalCrear">
+      <i class="bi bi-plus-lg me-1"></i>Nuevo modelo
+    </button>
+  </div>
 </div>
 
 <!-- Stats -->
@@ -84,6 +89,36 @@
   </div>
 </div>
 
+<!-- Modal importar TWB -->
+<div class="modal fade" id="modalImportar" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title fw-bold"><i class="bi bi-upload me-2"></i>Importar desde Tableau Workbook (.twb)</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small mb-3">
+          Importa datasources de un archivo <code>.twb</code> como modelos semánticos.
+          Cada datasource se convierte en un modelo con sus dimensiones y métricas.
+        </p>
+        <div class="mb-3">
+          <label class="form-label small fw-semibold">Archivo .twb <span class="text-danger">*</span></label>
+          <input type="file" id="twbFile" class="form-control" accept=".twb">
+        </div>
+        <div id="twbResult" class="d-none"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+        <button class="btn btn-primary btn-sm" onclick="importarTwb()" id="btnImportar">
+          <span id="importarSpinner" class="spinner-border spinner-border-sm d-none me-1"></span>
+          Importar
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Modal crear -->
 <div class="modal fade" id="modalCrear" tabindex="-1">
   <div class="modal-dialog">
@@ -117,6 +152,49 @@
 
 {% block scripts %}
 <script>
+async function importarTwb() {
+  const fileInput = document.getElementById('twbFile');
+  const resultDiv = document.getElementById('twbResult');
+  const spinner = document.getElementById('importarSpinner');
+  const btn = document.getElementById('btnImportar');
+
+  if (!fileInput.files.length) { alert('Seleccioná un archivo .twb'); return; }
+
+  const formData = new FormData();
+  formData.append('file', fileInput.files[0]);
+
+  spinner.classList.remove('d-none');
+  btn.disabled = true;
+  resultDiv.classList.add('d-none');
+
+  try {
+    const r = await fetch('/api/modelos/importar-twb', { method: 'POST', body: formData });
+    const data = await r.json();
+
+    spinner.classList.add('d-none');
+    btn.disabled = false;
+    resultDiv.classList.remove('d-none');
+
+    if (data.ok) {
+      let html = `<div class="alert alert-success mb-0 py-2 small">
+        <b>Modelos creados:</b> ${data.created.join(', ')}`;
+      if (data.skipped.length) {
+        html += `<br><b>Ya existían (omitidos):</b> ${data.skipped.join(', ')}`;
+      }
+      html += `</div>`;
+      resultDiv.innerHTML = html;
+      setTimeout(() => location.reload(), 1800);
+    } else {
+      resultDiv.innerHTML = `<div class="alert alert-danger mb-0 py-2 small">${data.error || 'Error desconocido'}</div>`;
+    }
+  } catch(e) {
+    spinner.classList.add('d-none');
+    btn.disabled = false;
+    resultDiv.innerHTML = `<div class="alert alert-danger mb-0 py-2 small">${e.message}</div>`;
+    resultDiv.classList.remove('d-none');
+  }
+}
+
 function crearModelo() {
   const name = document.getElementById('nuevoNombre').value.trim();
   const desc = document.getElementById('nuevoDesc').value.trim();
