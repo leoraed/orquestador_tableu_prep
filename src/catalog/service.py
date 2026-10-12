@@ -21,6 +21,7 @@ def save_parsed_flow(data: dict, db: Session) -> CatalogFlow:
         file_path=data["file_path"],
         parsed_at=datetime.utcnow(),
         node_count=data["node_count"],
+        graph_data=data.get("graph"),
     )
     db.add(flow)
     db.flush()

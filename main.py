@@ -25,6 +25,16 @@ from sqlalchemy import text
 Base.metadata.create_all(bind=engine)
 catalog_models.BaseCatalog.metadata.create_all(bind=engine_catalog)
 
+# Migración MySQL: agregar columna graph_data si no existe
+with engine_catalog.connect() as conn:
+    result = conn.execute(text(
+        "SELECT COUNT(*) FROM information_schema.COLUMNS "
+        "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'catalog_flows' AND COLUMN_NAME = 'graph_data'"
+    ))
+    if result.scalar() == 0:
+        conn.execute(text("ALTER TABLE catalog_flows ADD COLUMN graph_data JSON NULL"))
+        conn.commit()
+
 # Migración: agregar columnas nuevas si no existen (SQLite no soporta IF NOT EXISTS en ALTER)
 with engine.connect() as conn:
     existing = [r[1] for r in conn.execute(text("PRAGMA table_info(ejecuciones)")).fetchall()]

@@ -13,6 +13,7 @@ class CatalogFlow(BaseCatalog):
     file_path: Mapped[str] = mapped_column(String(500))
     parsed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     node_count: Mapped[int] = mapped_column(Integer, default=0)
+    graph_data: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
     sources: Mapped[list["CatalogSource"]] = relationship(
         back_populates="flow", cascade="all, delete-orphan"

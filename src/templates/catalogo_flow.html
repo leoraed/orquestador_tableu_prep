@@ -16,102 +16,24 @@
   </div>
 </div>
 
-<!-- Linaje visual -->
+<!-- Grafo de linaje -->
 <div class="card mb-4">
-  <div class="card-header py-2">
-    <i class="bi bi-arrow-right-circle me-2 text-primary"></i>Linaje del flow
-  </div>
-  <div class="card-body">
-    <div class="d-flex align-items-start gap-3 flex-wrap">
-
-      <!-- Fuentes -->
-      <div>
-        <div class="small text-muted fw-semibold mb-2 text-uppercase" style="letter-spacing:.5px">Fuentes</div>
-        {% for s in flow.sources %}
-        <div class="border rounded p-2 mb-2" style="min-width:180px;background:#f8f9fa">
-          <div class="fw-semibold small">{{ s.node_name }}</div>
-          <div class="text-muted" style="font-size:.75rem">
-            {% if s.source_type == 'mysql' %}
-              <span class="badge" style="background:#f89820;font-size:.65rem">MySQL</span>
-            {% elif s.source_type == 'excel' %}
-              <span class="badge bg-success" style="font-size:.65rem">Excel</span>
-            {% elif s.source_type == 'googledrive' %}
-              <span class="badge" style="background:#4285f4;font-size:.65rem">Drive</span>
-            {% else %}
-              <span class="badge bg-secondary" style="font-size:.65rem">{{ s.source_type }}</span>
-            {% endif %}
-            {{ s.source_table or s.file_path or '' }}
-          </div>
-          {% if s.database_name %}
-          <div class="text-muted" style="font-size:.7rem">DB: {{ s.database_name }}</div>
-          {% endif %}
-        </div>
-        {% endfor %}
-      </div>
-
-      <!-- Flecha -->
-      <div class="d-flex align-items-center" style="padding-top:1.5rem">
-        <i class="bi bi-arrow-right fs-4 text-muted"></i>
-      </div>
-
-      <!-- Transformaciones -->
-      <div>
-        <div class="small text-muted fw-semibold mb-2 text-uppercase" style="letter-spacing:.5px">Transformaciones</div>
-        {% set tipos = flow.transforms | map(attribute='transform_type') | list | unique | list %}
-        {% for t in flow.transforms %}
-        <div class="border rounded px-2 py-1 mb-1" style="font-size:.8rem;background:#fff">
-          {% if t.transform_type == 'join' %}
-            <i class="bi bi-intersect text-primary me-1"></i>
-          {% elif t.transform_type == 'aggregate' %}
-            <i class="bi bi-calculator text-warning me-1"></i>
-          {% elif t.transform_type == 'clean' %}
-            <i class="bi bi-eraser text-success me-1"></i>
-          {% elif t.transform_type == 'simpleunion' %}
-            <i class="bi bi-union text-info me-1"></i>
-          {% else %}
-            <i class="bi bi-gear text-secondary me-1"></i>
-          {% endif %}
-          {{ t.node_name }}
-          <span class="text-muted" style="font-size:.7rem">({{ t.transform_type }})</span>
-          {% if t.transform_type == 'join' and t.details %}
-            <div class="text-muted ms-3" style="font-size:.7rem">
-              {{ t.details.get('join_type','') }}
-              {% for c in t.details.get('conditions', []) %}
-                — {{ c.get('leftExpression','') }} = {{ c.get('rightExpression','') }}
-              {% endfor %}
-            </div>
-          {% endif %}
-          {% if t.transform_type == 'aggregate' and t.details %}
-            <div class="text-muted ms-3" style="font-size:.7rem">
-              GROUP BY: {{ t.details.get('group_by', []) | join(', ') }}
-            </div>
-          {% endif %}
-        </div>
-        {% endfor %}
-        {% if not flow.transforms %}
-        <div class="text-muted small">Sin transformaciones</div>
-        {% endif %}
-      </div>
-
-      <!-- Flecha -->
-      <div class="d-flex align-items-center" style="padding-top:1.5rem">
-        <i class="bi bi-arrow-right fs-4 text-muted"></i>
-      </div>
-
-      <!-- Outputs -->
-      <div>
-        <div class="small text-muted fw-semibold mb-2 text-uppercase" style="letter-spacing:.5px">Outputs</div>
-        {% for o in flow.outputs %}
-        <div class="border rounded p-2 mb-2" style="min-width:180px;background:#e8f5e9">
-          <div class="fw-semibold small">{{ o.destination_table or o.node_name }}</div>
-          <div class="text-muted" style="font-size:.75rem">
-            <span class="badge bg-success" style="font-size:.65rem">MySQL</span>
-          </div>
-        </div>
-        {% endfor %}
-      </div>
-
+  <div class="card-header py-2 d-flex justify-content-between align-items-center">
+    <span><i class="bi bi-diagram-3 me-2 text-primary"></i>Linaje del flow</span>
+    <div class="d-flex gap-3 align-items-center small text-muted">
+      <span><span class="d-inline-block rounded me-1" style="width:12px;height:12px;background:#4fc3f7"></span>Fuente</span>
+      <span><span class="d-inline-block rounded me-1" style="width:12px;height:12px;background:#198754"></span>Output</span>
+      <span><span class="d-inline-block rounded me-1" style="width:12px;height:12px;background:#fd7e14"></span>Join</span>
+      <span><span class="d-inline-block rounded me-1" style="width:12px;height:12px;background:#ffc107"></span>Agregación</span>
+      <span><span class="d-inline-block rounded me-1" style="width:12px;height:12px;background:#6c757d"></span>Limpieza</span>
+      <span><span class="d-inline-block rounded me-1" style="width:12px;height:12px;background:#0dcaf0"></span>Unión</span>
+      <button class="btn btn-sm btn-outline-secondary py-0 ms-2" onclick="reordenarGrafo()">
+        <i class="bi bi-arrow-repeat"></i>
+      </button>
     </div>
+  </div>
+  <div class="card-body p-0">
+    <div id="grafoLinaje" style="height:520px;border-radius:0 0 10px 10px;"></div>
   </div>
 </div>
 
@@ -123,6 +45,15 @@
       <i class="bi bi-table me-2 text-secondary"></i>
       <strong>{{ s.node_name }}</strong>
       <span class="text-muted small ms-2">{{ s.source_table or s.file_path or '' }}</span>
+      {% if s.source_type == 'mysql' %}
+        <span class="badge ms-1" style="background:#f89820;font-size:.65rem">MySQL</span>
+      {% elif s.source_type == 'excel' %}
+        <span class="badge bg-success ms-1" style="font-size:.65rem">Excel</span>
+      {% elif s.source_type == 'googledrive' %}
+        <span class="badge ms-1" style="background:#4285f4;font-size:.65rem">Drive</span>
+      {% else %}
+        <span class="badge bg-secondary ms-1" style="font-size:.65rem">{{ s.source_type }}</span>
+      {% endif %}
       <span class="badge bg-secondary ms-1">{{ s.fields | length }} campos</span>
     </span>
   </div>
@@ -130,17 +61,12 @@
     <table class="table table-sm table-hover mb-0">
       <thead>
         <tr>
-          <th>#</th>
-          <th>Campo</th>
-          <th>Tipo</th>
-          <th>Descripción</th>
-          <th>Tags</th>
-          <th></th>
+          <th>#</th><th>Campo</th><th>Tipo</th><th>Descripción</th><th>Tags</th><th></th>
         </tr>
       </thead>
       <tbody>
         {% for f in s.fields | sort(attribute='ordinal') %}
-        <tr id="row-{{ f.id }}">
+        <tr>
           <td class="text-muted small">{{ f.ordinal }}</td>
           <td class="font-monospace fw-semibold small">{{ f.field_name }}</td>
           <td><span class="badge bg-light text-dark border small">{{ f.field_type }}</span></td>
@@ -156,17 +82,11 @@
           </td>
           <td>
             <button class="btn btn-sm btn-outline-secondary py-0 btn-edit-{{ f.id }}"
-              onclick="editarCampo({{ f.id }})">
-              <i class="bi bi-pencil"></i>
-            </button>
+              onclick="editarCampo({{ f.id }})"><i class="bi bi-pencil"></i></button>
             <button class="btn btn-sm btn-success py-0 btn-save-{{ f.id }} d-none"
-              onclick="guardarCampo({{ f.id }})">
-              <i class="bi bi-check-lg"></i>
-            </button>
+              onclick="guardarCampo({{ f.id }})"><i class="bi bi-check-lg"></i></button>
             <button class="btn btn-sm btn-outline-secondary py-0 btn-cancel-{{ f.id }} d-none"
-              onclick="cancelarEdicion({{ f.id }})">
-              <i class="bi bi-x-lg"></i>
-            </button>
+              onclick="cancelarEdicion({{ f.id }})"><i class="bi bi-x-lg"></i></button>
           </td>
         </tr>
         {% endfor %}
@@ -179,7 +99,106 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
 <script>
+// ── Datos del grafo ────────────────────────────────────────────────────────
+const rawGraph = {{ graph_data | tojson }};
+
+const COLOR = {
+  input:     { bg: '#4fc3f7', border: '#0288d1', font: '#fff' },
+  output:    { bg: '#198754', border: '#0f5132', font: '#fff' },
+  join:      { bg: '#fd7e14', border: '#c55a00', font: '#fff' },
+  aggregate: { bg: '#ffc107', border: '#d39e00', font: '#212529' },
+  clean:     { bg: '#6c757d', border: '#495057', font: '#fff' },
+  union:     { bg: '#0dcaf0', border: '#0aa2c0', font: '#212529' },
+  pivot:     { bg: '#6f42c1', border: '#4e2d8a', font: '#fff' },
+};
+
+const LABEL_PREFIX = {
+  input: '',
+  output: '',
+  join: '⋈ ',
+  aggregate: 'Σ ',
+  clean: '',
+  union: '∪ ',
+  pivot: '↔ ',
+};
+
+const SHAPE = {
+  input:     'box',
+  output:    'box',
+  join:      'diamond',
+  aggregate: 'ellipse',
+  clean:     'ellipse',
+  union:     'ellipse',
+  pivot:     'ellipse',
+};
+
+const visNodes = rawGraph.nodes.map(n => {
+  const c = COLOR[n.type] || COLOR.clean;
+  const prefix = LABEL_PREFIX[n.type] || '';
+  return {
+    id: n.id,
+    label: prefix + n.name,
+    color: { background: c.bg, border: c.border, highlight: { background: '#fff', border: '#333' } },
+    font: { color: c.font, size: 13 },
+    shape: SHAPE[n.type] || 'ellipse',
+    margin: 8,
+    shadow: true,
+    _type: n.type,
+  };
+});
+
+const visEdges = rawGraph.edges.map((e, i) => ({
+  id: i,
+  from: e.from,
+  to: e.to,
+  arrows: 'to',
+  color: { color: '#adb5bd', highlight: '#495057', opacity: 0.8 },
+  smooth: { type: 'cubicBezier', forceDirection: 'horizontal', roundness: 0.4 },
+  width: 2,
+}));
+
+// ── Inicializar vis.js ─────────────────────────────────────────────────────
+const nodesDS = new vis.DataSet(visNodes);
+const edgesDS = new vis.DataSet(visEdges);
+const container = document.getElementById('grafoLinaje');
+
+const LAYOUT = {
+  enabled: true,
+  direction: 'LR',
+  sortMethod: 'directed',
+  levelSeparation: 200,
+  nodeSpacing: 120,
+  treeSpacing: 200,
+  blockShifting: true,
+  edgeMinimization: true,
+  parentCentralization: true,
+};
+
+const network = new vis.Network(
+  container,
+  { nodes: nodesDS, edges: edgesDS },
+  {
+    layout: { hierarchical: LAYOUT },
+    physics: { enabled: false },
+    interaction: { dragNodes: true, hover: true, zoomView: true, dragView: true },
+    edges: { selectionWidth: 3 },
+  }
+);
+
+network.once('afterDrawing', () => {
+  network.fit({ animation: false });
+  network.setOptions({ layout: { hierarchical: { enabled: false } } });
+});
+
+function reordenarGrafo() {
+  network.setOptions({ layout: { hierarchical: LAYOUT }, physics: { enabled: false } });
+  network.fit({ animation: { duration: 300 } });
+  setTimeout(() => network.setOptions({ layout: { hierarchical: { enabled: false } } }), 200);
+}
+
+// ── Edición de campos ──────────────────────────────────────────────────────
 function editarCampo(id) {
   document.querySelector(`.desc-text-${id}`).classList.add('d-none');
   document.querySelector(`.tags-text-${id}`).classList.add('d-none');
@@ -203,7 +222,6 @@ function cancelarEdicion(id) {
 function guardarCampo(id) {
   const desc = document.querySelector(`.desc-input-${id}`).value;
   const tags = document.querySelector(`.tags-input-${id}`).value;
-
   fetch(`/api/catalog/fields/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },

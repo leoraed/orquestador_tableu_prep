@@ -764,6 +764,7 @@ def pagina_catalogo_flow(flow_name: str, request: Request, db: Session = Depends
     return templates.TemplateResponse("catalogo_flow.html", {
         "request": request,
         "flow": flow_data,
+        "graph_data": flow.graph_data or {"nodes": [], "edges": []},
         "active": "catalogo",
     })
 

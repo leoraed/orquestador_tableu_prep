@@ -22,6 +22,28 @@ def _source_type(node_type: str, conn_attrs: dict) -> str:
     return cls or "unknown"
 
 
+def _graph_node_type(base_type: str, node_type: str, action: dict | None) -> str:
+    if base_type == "input":
+        return "input"
+    if base_type == "output":
+        return "output"
+    if base_type == "container":
+        return "clean"
+    if base_type == "superNode":
+        if action is None or "SuperTransform" in node_type:
+            return "clean"
+        t = action.get("nodeType", "")
+        if "Join" in t:
+            return "join"
+        if "Aggregate" in t:
+            return "aggregate"
+        if "Pivot" in t:
+            return "pivot"
+        if "Union" in t:
+            return "union"
+    return "clean"
+
+
 def parse_tfl(file_path: Path) -> dict:
     with zipfile.ZipFile(file_path, "r") as z:
         with z.open("flow") as f:
@@ -33,6 +55,16 @@ def parse_tfl(file_path: Path) -> dict:
     sources = []
     outputs = []
     transforms = []
+    graph_nodes = []
+    graph_edges = []
+
+    for node_id, node in nodes.items():
+        base_type = node.get("baseType", "")
+        action = node.get("actionNode")
+        g_type = _graph_node_type(base_type, node.get("nodeType", ""), action)
+        graph_nodes.append({"id": node_id, "name": node.get("name", ""), "type": g_type})
+        for nxt in node.get("nextNodes", []):
+            graph_edges.append({"from": node_id, "to": nxt["nextNodeId"]})
 
     for node_id, node in nodes.items():
         base_type = node.get("baseType")
@@ -146,4 +178,5 @@ def parse_tfl(file_path: Path) -> dict:
         "sources": sources,
         "outputs": outputs,
         "transforms": transforms,
+        "graph": {"nodes": graph_nodes, "edges": graph_edges},
     }
