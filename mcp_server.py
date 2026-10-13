@@ -20,7 +20,10 @@ from pathlib import Path
 import uvicorn
 import yaml as _yaml
 from dotenv import load_dotenv
-from mcp.server.fastmcp import FastMCP
+try:
+    from mcp.server.fastmcp import FastMCP as _MCPClass
+except ModuleNotFoundError:
+    from mcp.server.mcpserver import MCPServer as _MCPClass  # mcp >= 2.x rename
 
 load_dotenv(Path(__file__).parent / ".env")
 
@@ -30,7 +33,7 @@ from src.catalog.models_semantic import SemanticModel
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-mcp = FastMCP(
+mcp = _MCPClass(
     "orquestador-semantico",
     instructions=(
         "Tenés acceso a los modelos semánticos del Orquestador Tableau Prep. "
