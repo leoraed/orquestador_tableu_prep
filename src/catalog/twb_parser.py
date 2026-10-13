@@ -1,5 +1,6 @@
 import re
 import xml.etree.ElementTree as ET
+from collections import defaultdict
 from dataclasses import dataclass, field
 
 
@@ -25,95 +26,142 @@ def _safe_name(caption: str) -> str:
 
 
 def parse_twb(content: bytes) -> list[TwbDatasource]:
-    """Parse a .twb XML file; returns one TwbDatasource per non-Parameters datasource."""
+    """
+    Parse a .twb XML file.
+    Only imports fields actually used in worksheets (avoids unused and internal copies).
+    Falls back to all non-copy fields if the file has no worksheets.
+    """
     root = ET.fromstring(content)
     ds_container = root.find("datasources")
     if ds_container is None:
         raise ValueError("El archivo TWB no contiene datasources.")
 
-    results = []
+    # ── Step 1: build full column index per datasource ──────────────────────
+    col_defs: dict[str, dict] = {}      # ds_name -> {col_name: info_dict}
+    col_table: dict[str, dict] = {}     # ds_name -> {col_name: table_name}
+    ds_tables: dict[str, list] = {}     # ds_name -> [table_names]
+    ds_captions: dict[str, str] = {}    # ds_name -> human caption
 
     for ds in ds_container:
-        name = ds.get("name", "")
-        caption = ds.get("caption", "") or name
-
-        if name == "Parameters":
+        ds_name = ds.get("name", "")
+        caption = ds.get("caption", "") or ds_name
+        if ds_name == "Parameters":
             continue
 
-        conn = ds.find("connection")
-        tables: list[str] = []
-        cols_map: dict[str, str] = {}  # [FieldName] -> table_name
+        ds_captions[ds_name] = caption
+        col_defs[ds_name] = {}
+        col_table[ds_name] = {}
+        ds_tables[ds_name] = []
 
+        conn = ds.find("connection")
         if conn is not None:
             for rel in conn.findall('.//relation[@type="table"]'):
                 t = rel.get("table", "").strip("[]")
-                if t and t not in tables:
-                    tables.append(t)
+                if t and t not in ds_tables[ds_name]:
+                    ds_tables[ds_name].append(t)
 
             cols_el = conn.find("cols")
             if cols_el is not None:
                 for m in cols_el.findall("map"):
                     key = m.get("key", "")
                     val = m.get("value", "")
-                    # val format: [table_name].[field_name]
                     if "].[" in val:
-                        table_part = val.split("].[")[0].strip("[]")
-                        cols_map[key] = table_part
+                        col_table[ds_name][key] = val.split("].[")[0].strip("[]")
 
-        base_table = tables[0] if tables else ""
-        join_tables = tables[1:]
+        for col in ds.findall("column"):
+            name = col.get("name", "")
+            if not name:
+                continue
+            calc = col.find("calculation")
+            col_defs[ds_name][name] = {
+                "caption": col.get("caption", "") or _clean(name),
+                "role": col.get("role", ""),
+                "datatype": col.get("datatype", "string"),
+                "formula": calc.get("formula", "") if calc is not None else "",
+                "fmt": col.get("default-format", ""),
+            }
+
+    # ── Step 2: collect used fields per datasource from worksheets ───────────
+    used: dict[str, set] = defaultdict(set)   # ds_name -> set of col names
+    worksheets = root.find("worksheets")
+    if worksheets is not None:
+        for ws in worksheets:
+            table_el = ws.find("table")
+            if table_el is None:
+                continue
+            view = table_el.find("view")
+            if view is None:
+                continue
+            for dd in view.findall("datasource-dependencies"):
+                ds_name = dd.get("datasource", "")
+                if ds_name not in col_defs:
+                    continue
+                for col in dd.findall("column"):
+                    fn = col.get("name", "")
+                    if fn:
+                        used[ds_name].add(fn)
+
+    # ── Step 3: build one TwbDatasource per datasource ───────────────────────
+    results = []
+
+    for ds_name, caption in ds_captions.items():
+        defs = col_defs[ds_name]
+        ctmap = col_table[ds_name]
+        tables = ds_tables[ds_name]
+
+        # Use worksheet-filtered set; fall back to all columns if no worksheets
+        candidate_names = used.get(ds_name) or set(defs.keys())
 
         dimensions: list[dict] = []
         metrics: list[dict] = []
-        seen: set[str] = set()
+        seen_captions: set[str] = set()
 
-        for col in ds.findall("column"):
-            col_name = col.get("name", "")
-            col_caption = col.get("caption", "")
-            col_role = col.get("role", "")
-            col_datatype = col.get("datatype", "")
-
-            if col_name.startswith("[:"):
-                continue
-            if re.search(r"\((copia|copy)\)_", col_name):
-                continue
-            if not col_role:
+        for fn in candidate_names:
+            info = defs.get(fn)
+            if not info:
                 continue
 
-            display = col_caption if col_caption else _clean(col_name)
-            if display in seen:
+            role = info["role"]
+            if not role:
                 continue
-            seen.add(display)
 
-            calc_el = col.find("calculation")
-            if calc_el is not None:
-                expression = calc_el.get("formula", "") or display
-            elif col_name in cols_map:
-                expression = f"{cols_map[col_name]}.{_clean(col_name)}"
+            display = info["caption"]
+            if display in seen_captions:
+                continue
+            seen_captions.add(display)
+
+            formula = info["formula"]
+            if formula:
+                expression = formula
+            elif fn in ctmap:
+                expression = f"{ctmap[fn]}.{_clean(fn)}"
             else:
-                expression = _clean(col_name)
+                expression = _clean(fn)
 
-            if col_role == "dimension":
+            if role == "dimension":
                 dimensions.append({
                     "name": display,
                     "expression": expression,
-                    "data_type": col_datatype,
+                    "data_type": info["datatype"],
                     "description": "",
                 })
-            elif col_role == "measure":
+            elif role == "measure":
                 metrics.append({
                     "name": display,
                     "expression": expression,
-                    "format": col.get("default-format", ""),
+                    "format": info["fmt"],
                     "description": "",
                 })
+
+        dimensions.sort(key=lambda x: x["name"])
+        metrics.sort(key=lambda x: x["name"])
 
         results.append(TwbDatasource(
             model_name=_safe_name(caption),
             caption=caption,
             description=f"Importado desde Tableau Workbook (fuente: {caption})",
-            base_table=base_table,
-            join_tables=join_tables,
+            base_table=tables[0] if tables else "",
+            join_tables=tables[1:],
             dimensions=dimensions,
             metrics=metrics,
         ))
