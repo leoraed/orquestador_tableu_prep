@@ -110,13 +110,31 @@ function render() {
   c.innerHTML = state.entities.map((e, i) => renderEntidad(e, i)).join('');
 }
 
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
 function renderEntidad(e, i) {
   const joins = (e.joins || []).map((j, ji) => `
     <tr>
-      <td class="font-monospace small">${j.table}</td>
-      <td class="small">${j.alias}</td>
-      <td class="font-monospace small" style="max-width:300px;word-break:break-all">${j.on}</td>
-      <td><span class="badge bg-secondary">${j.type}</span></td>
+      <td style="min-width:160px">
+        <input class="form-control form-control-sm font-monospace" value="${esc(j.table)}"
+          list="tablasSugeridas"
+          onchange="editJoin(${i},${ji},'table',this.value)">
+      </td>
+      <td style="min-width:100px">
+        <input class="form-control form-control-sm" value="${esc(j.alias||'')}"
+          placeholder="${esc(j.table)}"
+          onchange="editJoin(${i},${ji},'alias',this.value)">
+      </td>
+      <td style="min-width:220px">
+        <input class="form-control form-control-sm font-monospace" value="${esc(j.on||'')}"
+          placeholder="t1.campo = t2.campo"
+          onchange="editJoin(${i},${ji},'on',this.value)">
+      </td>
+      <td style="min-width:90px">
+        <select class="form-select form-select-sm" onchange="editJoin(${i},${ji},'type',this.value)">
+          ${['LEFT','INNER','RIGHT'].map(t=>`<option value="${t}"${(j.type||'LEFT').toUpperCase()===t?' selected':''}>${t}</option>`).join('')}
+        </select>
+      </td>
       <td><button class="btn btn-sm btn-link text-danger p-0" onclick="eliminarJoin(${i},${ji})"><i class="bi bi-x-lg"></i></button></td>
     </tr>`).join('');
 
@@ -162,10 +180,11 @@ function renderEntidad(e, i) {
           </button>
         </div>
         ${e.joins && e.joins.length ? `
-        <table class="table table-sm mb-0">
-          <thead><tr><th>Tabla</th><th>Alias</th><th>ON</th><th>Tipo</th><th></th></tr></thead>
+        <div class="table-responsive">
+        <table class="table table-sm mb-0 align-middle">
+          <thead><tr><th>Tabla</th><th>Alias</th><th>ON (condición)</th><th>Tipo</th><th></th></tr></thead>
           <tbody>${joins}</tbody>
-        </table>` : '<div class="text-muted small fst-italic">Sin joins.</div>'}
+        </table></div>` : '<div class="text-muted small fst-italic">Sin joins.</div>'}
         <div id="formJoin-${i}" class="d-none mt-2 p-3 border rounded bg-light">
           <div class="row g-2">
             <div class="col-md-4">
@@ -310,10 +329,14 @@ function agregarJoin(i) {
   const alias = document.getElementById(`jAlias-${i}`).value.trim();
   const on = document.getElementById(`jOn-${i}`).value.trim();
   const tipo = document.getElementById(`jTipo-${i}`).value;
-  if (!tabla || !on) { alert('Tabla y condición ON son obligatorias.'); return; }
+  if (!tabla) { alert('La tabla es obligatoria.'); return; }
   state.entities[i].joins = state.entities[i].joins || [];
-  state.entities[i].joins.push({ table: tabla, alias: alias || tabla, on, type: tipo });
+  state.entities[i].joins.push({ table: tabla, alias: alias || tabla, on: on || '', type: tipo.toUpperCase() });
   render();
+}
+
+function editJoin(i, ji, field, value) {
+  state.entities[i].joins[ji][field] = value;
 }
 
 function eliminarJoin(i, ji) { state.entities[i].joins.splice(ji, 1); render(); }
