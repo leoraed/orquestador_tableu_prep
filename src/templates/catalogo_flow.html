@@ -282,8 +282,12 @@ function renderDetalle(node) {
     return `<span class="text-muted">Tabla destino:</span> <span class="font-monospace">${esc(d.destination_table || '—')}</span>`;
   }
   if (node.type === 'join') {
+    // El parser guarda leftExpression/rightExpression ("[campo]"); left/right por compatibilidad
+    const lado = (v) => esc(String(v ?? '').replace(/^\[|\]$/g, ''));
     const conds = (d.conditions || []).map(c =>
-      `<tr><td class="font-monospace">${esc(c.left)}</td><td class="text-muted px-1">=</td><td class="font-monospace">${esc(c.right)}</td></tr>`).join('');
+      `<tr><td class="font-monospace">${lado(c.leftExpression ?? c.left)}</td>
+        <td class="text-muted px-1">${esc(c.comparator === '==' || !c.comparator ? '=' : c.comparator)}</td>
+        <td class="font-monospace">${lado(c.rightExpression ?? c.right)}</td></tr>`).join('');
     return `<div class="mb-1"><span class="text-muted">Tipo:</span> <strong>${esc((d.join_type || '').toUpperCase())}</strong></div>
       ${conds ? `<table class="table table-sm mb-0"><tbody>${conds}</tbody></table>` : '<span class="text-muted">Sin condiciones</span>'}`;
   }
