@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import Integer, String, DateTime, Text, JSON, ForeignKey, text
+from sqlalchemy import Boolean, Integer, String, DateTime, Text, JSON, ForeignKey, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from src.catalog.db import BaseCatalog
 
@@ -48,6 +48,9 @@ class SemanticDimension(BaseCatalog):
     expression: Mapped[str] = mapped_column(Text, nullable=False)
     data_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     tableau_formula: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # True: editado a mano (reimportar no lo pisa). False: tal cual lo dejó el
+    # importador. None: anterior a esta columna (se trata como editado).
+    editado: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
 
     entity: Mapped["SemanticEntity"] = relationship(back_populates="dimensions")
 
@@ -62,8 +65,24 @@ class SemanticMetric(BaseCatalog):
     expression: Mapped[str] = mapped_column(Text, nullable=False)
     format: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     tableau_formula: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # True: editado a mano (reimportar no lo pisa). False: tal cual lo dejó el
+    # importador. None: anterior a esta columna (se trata como editado).
+    editado: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
 
     entity: Mapped["SemanticEntity"] = relationship(back_populates="metrics")
+
+
+class SemanticModelBackup(BaseCatalog):
+    """Copia completa de un modelo (mismo formato que el export YAML)."""
+    __tablename__ = "semantic_model_backups"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # Por nombre y sin FK: el backup sobrevive aunque se borre el modelo
+    model_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    motivo: Mapped[str] = mapped_column(String(255), nullable=False)
+    automatico: Mapped[bool] = mapped_column(Boolean, default=True)
+    contenido: Mapped[dict] = mapped_column(JSON, nullable=False)
 
 
 def migrar_columnas_semanticas(engine) -> None:
@@ -71,6 +90,8 @@ def migrar_columnas_semanticas(engine) -> None:
     nuevas = [
         ("semantic_dimensions", "tableau_formula", "TEXT NULL"),
         ("semantic_metrics", "tableau_formula", "TEXT NULL"),
+        ("semantic_dimensions", "editado", "TINYINT(1) NULL"),
+        ("semantic_metrics", "editado", "TINYINT(1) NULL"),
     ]
     with engine.connect() as conn:
         for tabla, columna, ddl in nuevas:

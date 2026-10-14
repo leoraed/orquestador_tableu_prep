@@ -7,6 +7,9 @@
     <button class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#modalImportar">
       <i class="bi bi-upload me-1"></i>Importar TWB
     </button>
+    <button class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#modalYaml">
+      <i class="bi bi-file-earmark-arrow-up me-1"></i>Cargar YAML
+    </button>
     <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#modalCrear">
       <i class="bi bi-plus-lg me-1"></i>Nuevo modelo
     </button>
@@ -89,9 +92,22 @@
   </div>
 </div>
 
+<!-- Modelos eliminados con backup -->
+<div class="card mt-3 d-none" id="cardEliminados">
+  <div class="card-header py-2 small">
+    <i class="bi bi-trash3 me-2 text-secondary"></i>Modelos eliminados que se pueden recuperar
+  </div>
+  <div class="card-body p-0">
+    <table class="table table-sm mb-0">
+      <thead><tr class="small text-muted"><th>Modelo</th><th>Último backup</th><th>Campos</th><th></th></tr></thead>
+      <tbody id="tbodyEliminados"></tbody>
+    </table>
+  </div>
+</div>
+
 <!-- Modal importar TWB -->
 <div class="modal fade" id="modalImportar" tabindex="-1">
-  <div class="modal-dialog">
+  <div class="modal-dialog modal-lg">
     <div class="modal-content">
       <div class="modal-header">
         <h6 class="modal-title fw-bold"><i class="bi bi-upload me-2"></i>Importar desde Tableau Workbook (.twb)</h6>
@@ -99,21 +115,48 @@
       </div>
       <div class="modal-body">
         <p class="text-muted small mb-3">
-          Importa datasources de un archivo <code>.twb</code> como modelos semánticos.
-          Cada datasource se convierte en un modelo con sus dimensiones y métricas.
+          Cada datasource del <code>.twb</code> se convierte en un modelo. Si el modelo ya existe se
+          <strong>actualiza sin pisar</strong> los campos editados a mano, la tabla base ni los joins
+          (antes se guarda un backup). Primero vas a ver qué cambia.
         </p>
         <div class="mb-3">
           <label class="form-label small fw-semibold">Archivo .twb <span class="text-danger">*</span></label>
-          <input type="file" id="twbFile" class="form-control" accept=".twb">
+          <input type="file" id="twbFile" class="form-control" accept=".twb" onchange="resetImport()">
         </div>
-        <div id="twbResult" class="d-none"></div>
+        <div id="twbResult"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cerrar</button>
+        <button class="btn btn-outline-primary btn-sm" onclick="importarTwb('preview')" id="btnAnalizar">
+          <i class="bi bi-search me-1"></i>Analizar
+        </button>
+        <button class="btn btn-primary btn-sm d-none" onclick="importarTwb('aplicar')" id="btnAplicar">
+          <i class="bi bi-check-lg me-1"></i>Aplicar importación
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal cargar YAML -->
+<div class="modal fade" id="modalYaml" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title fw-bold"><i class="bi bi-file-earmark-arrow-up me-2"></i>Cargar modelo desde YAML</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small mb-3">
+          Sirve para restaurar un export o backup descargado. Si ya existe un modelo con el mismo nombre
+          se <strong>reemplaza</strong> (antes se guarda un backup del estado actual).
+        </p>
+        <input type="file" id="yamlFile" class="form-control" accept=".yaml,.yml">
+        <div id="yamlResult" class="mt-3"></div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
-        <button class="btn btn-primary btn-sm" onclick="importarTwb()" id="btnImportar">
-          <span id="importarSpinner" class="spinner-border spinner-border-sm d-none me-1"></span>
-          Importar
-        </button>
+        <button class="btn btn-primary btn-sm" onclick="cargarYaml()" id="btnYaml">Cargar</button>
       </div>
     </div>
   </div>
@@ -152,57 +195,112 @@
 
 {% block scripts %}
 <script>
-async function importarTwb() {
-  const fileInput = document.getElementById('twbFile');
-  const resultDiv = document.getElementById('twbResult');
-  const spinner = document.getElementById('importarSpinner');
-  const btn = document.getElementById('btnImportar');
+const esc = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const fecha = (iso) => iso ? new Date(iso + 'Z').toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' }) : '—';
+let importado = false;
 
-  if (!fileInput.files.length) { alert('Seleccioná un archivo .twb'); return; }
+document.getElementById('modalImportar').addEventListener('hidden.bs.modal', () => { if (importado) location.reload(); });
 
-  const formData = new FormData();
-  formData.append('file', fileInput.files[0]);
+function resetImport() {
+  document.getElementById('twbResult').innerHTML = '';
+  document.getElementById('btnAplicar').classList.add('d-none');
+  document.getElementById('btnAnalizar').classList.remove('d-none');
+}
 
-  spinner.classList.remove('d-none');
-  btn.disabled = true;
-  resultDiv.classList.add('d-none');
+function lista(items, max = 12) {
+  if (!items.length) return '';
+  const nombres = items.map(i => esc(i.name) + (i.motivo ? ` <span class="text-muted">(${esc(i.motivo)})</span>` : ''));
+  return nombres.slice(0, max).join(', ') + (items.length > max ? ` y ${items.length - max} más` : '');
+}
 
-  try {
-    const r = await fetch('/api/modelos/importar-twb', { method: 'POST', body: formData });
-    const data = await r.json();
-
-    spinner.classList.add('d-none');
-    btn.disabled = false;
-    resultDiv.classList.remove('d-none');
-
-    if (data.ok) {
-      let html = `<div class="alert alert-success mb-0 py-2 small">
-        <b>Modelos creados:</b> ${data.created.join(', ')}`;
-      if (data.skipped.length) {
-        html += `<br><b>Ya existían (omitidos):</b> ${data.skipped.join(', ')}`;
-      }
-      html += `</div>`;
-      // Avisos y campos sin convertir: se muestran y no se recarga, para que se lean
-      const conAvisos = data.created.filter(m => (data.avisos || {})[m] || (data.pendientes || {})[m]);
-      for (const m of conAvisos) {
-        const avisos = (data.avisos || {})[m] || [];
-        const pend = ((data.pendientes || {})[m] || []).length;
-        html += `<div class="alert alert-warning mt-2 mb-0 py-2 small"><b>${m}</b>
-          ${avisos.map(a => `<div><i class="bi bi-exclamation-triangle me-1"></i>${a}</div>`).join('')}
-          ${pend ? `<div>${pend} campos quedaron en sintaxis Tableau (filtrá por «Pendientes» en el editor).</div>` : ''}
-          <a href="/modelos/${encodeURIComponent(m)}" class="alert-link">Abrir en el editor →</a></div>`;
-      }
-      resultDiv.innerHTML = html;
-      if (!conAvisos.length) setTimeout(() => location.reload(), 1800);
-    } else {
-      resultDiv.innerHTML = `<div class="alert alert-danger mb-0 py-2 small">${data.error || 'Error desconocido'}</div>`;
-    }
-  } catch(e) {
-    spinner.classList.add('d-none');
-    btn.disabled = false;
-    resultDiv.innerHTML = `<div class="alert alert-danger mb-0 py-2 small">${e.message}</div>`;
-    resultDiv.classList.remove('d-none');
+function renderModeloImport(m, preview) {
+  const verbo = preview ? 'Se va a' : 'Se';
+  let cuerpo;
+  if (m.nuevo) {
+    cuerpo = `<div>${verbo} ${preview ? 'crear' : 'creó'} con ${m.dimensiones} dimensiones y ${m.metricas} métricas.</div>`;
+  } else {
+    const p = m.plan;
+    const filas = [
+      ['Actualizados', p.actualizados, 'text-primary'],
+      ['Agregados', p.agregados, 'text-success'],
+      ['Eliminados', p.eliminados, 'text-danger'],
+      ['Conservados', p.conservados, 'text-secondary'],
+    ].filter(([, items]) => items.length).map(([t, items, cls]) =>
+      `<div><strong class="${cls}">${t} (${items.length}):</strong> ${lista(items)}</div>`).join('');
+    cuerpo = `${p.entidad.map(e => `<div class="text-muted">${esc(e)}</div>`).join('')}
+      ${filas || '<div>No hay cambios en los campos.</div>'}
+      <div class="text-muted">${p.sin_cambios} campos sin cambios.</div>`;
   }
+  const avisos = (m.avisos || []).map(a => `<div class="text-warning-emphasis"><i class="bi bi-exclamation-triangle me-1"></i>${esc(a)}</div>`).join('');
+  const pend = (m.pendientes || []).length;
+  return `<div class="border rounded p-2 mb-2 small">
+    <div class="fw-semibold mb-1">${esc(m.name)}
+      <span class="badge ${m.nuevo ? 'text-bg-success' : 'text-bg-primary'} ms-1">${m.nuevo ? 'nuevo' : 'existente'}</span></div>
+    ${cuerpo}${avisos}
+    ${pend ? `<div class="text-muted">${pend} campos del workbook quedan en sintaxis Tableau.</div>` : ''}
+    ${!preview ? `<a href="/modelos/${encodeURIComponent(m.name)}">Abrir en el editor →</a>` : ''}
+  </div>`;
+}
+
+async function importarTwb(modo) {
+  const fileInput = document.getElementById('twbFile');
+  const out = document.getElementById('twbResult');
+  if (!fileInput.files.length) { alert('Seleccioná un archivo .twb'); return; }
+  const fd = new FormData();
+  fd.append('file', fileInput.files[0]);
+  fd.append('modo', modo);
+  const btn = document.getElementById(modo === 'preview' ? 'btnAnalizar' : 'btnAplicar');
+  btn.disabled = true;
+  out.innerHTML = `<div class="small text-muted">${modo === 'preview' ? 'Analizando…' : 'Importando…'}</div>`;
+  try {
+    const data = await fetch('/api/modelos/importar-twb', { method: 'POST', body: fd }).then(r => r.json());
+    if (!data.ok) { out.innerHTML = `<div class="alert alert-danger py-2 small mb-0">${esc(data.error)}</div>`; return; }
+    const preview = data.preview;
+    out.innerHTML = (preview ? '' : '<div class="alert alert-success py-2 small">Importación aplicada.</div>') +
+      data.modelos.map(m => renderModeloImport(m, preview)).join('');
+    document.getElementById('btnAnalizar').classList.toggle('d-none', preview);
+    document.getElementById('btnAplicar').classList.toggle('d-none', !preview);
+    if (!preview) importado = true;
+  } catch (e) {
+    out.innerHTML = `<div class="alert alert-danger py-2 small mb-0">${esc(e.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function cargarYaml() {
+  const f = document.getElementById('yamlFile');
+  const out = document.getElementById('yamlResult');
+  if (!f.files.length) { alert('Seleccioná un archivo .yaml'); return; }
+  const fd = new FormData();
+  fd.append('file', f.files[0]);
+  const data = await fetch('/api/modelos/importar-yaml', { method: 'POST', body: fd }).then(r => r.json());
+  if (!data.ok) { out.innerHTML = `<div class="alert alert-danger py-2 small mb-0">${esc(data.error)}</div>`; return; }
+  out.innerHTML = `<div class="alert alert-success py-2 small mb-0">
+    Modelo «${esc(data.name)}» ${data.reemplazado ? 'reemplazado (el estado anterior quedó en backups)' : 'creado'}.</div>`;
+  setTimeout(() => location.href = '/modelos/' + encodeURIComponent(data.name), 1200);
+}
+
+async function cargarEliminados() {
+  const d = await fetch('/api/modelos-eliminados').then(r => r.json());
+  if (!d.ok || !d.modelos.length) return;
+  document.getElementById('cardEliminados').classList.remove('d-none');
+  document.getElementById('tbodyEliminados').innerHTML = d.modelos.map(b => `<tr>
+    <td class="fw-semibold small">${esc(b.model_name)}</td>
+    <td class="small text-muted">${fecha(b.created_at)} · ${esc(b.motivo)}</td>
+    <td class="small">${b.campos}</td>
+    <td class="text-end text-nowrap">
+      <a class="btn btn-sm btn-outline-secondary py-0" href="/api/modelos/backups/${b.id}/yaml" download><i class="bi bi-download"></i></a>
+      <button class="btn btn-sm btn-outline-primary py-0" onclick="recuperar(${b.id}, '${esc(b.model_name)}')">
+        <i class="bi bi-arrow-counterclockwise me-1"></i>Recuperar</button>
+    </td></tr>`).join('');
+}
+
+async function recuperar(id, nombre) {
+  if (!confirm(`¿Recuperar el modelo «${nombre}» desde su último backup?`)) return;
+  const d = await fetch(`/api/modelos/backups/${id}/restaurar`, { method: 'POST' }).then(r => r.json());
+  if (d.ok) location.href = '/modelos/' + encodeURIComponent(d.name);
+  else alert('Error: ' + d.error);
 }
 
 function crearModelo() {
@@ -221,12 +319,14 @@ function crearModelo() {
 }
 
 function eliminarModelo(name) {
-  if (!confirm(`¿Eliminar el modelo "${name}"? Esta acción no se puede deshacer.`)) return;
+  if (!confirm(`¿Eliminar el modelo "${name}"? Se guarda un backup y lo vas a poder recuperar desde esta página.`)) return;
   fetch(`/api/modelos/${encodeURIComponent(name)}/eliminar`, { method: 'POST' })
     .then(r => r.json()).then(data => {
       if (data.ok) location.reload();
       else alert('Error: ' + data.error);
     });
 }
+
+cargarEliminados();
 </script>
 {% endblock %}

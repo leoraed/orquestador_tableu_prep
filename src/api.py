@@ -983,63 +983,21 @@ from src.catalog.models_semantic import SemanticModel, SemanticEntity, SemanticD
 from src.catalog.models import CatalogOutput
 
 
-def _modelo_to_dict(m: SemanticModel) -> dict:
-    return {
-        "name": m.name,
-        "description": m.description or "",
-        "entities": [
-            {
-                "name": e.name,
-                "description": e.description or "",
-                "base_table": e.base_table,
-                "joins": e.joins or [],
-                "dimensions": [
-                    {"name": d.name, "expression": d.expression,
-                     "data_type": d.data_type or "string", "description": d.description or "",
-                     "tableau_formula": d.tableau_formula}
-                    for d in e.dimensions
-                ],
-                "metrics": [
-                    {"name": mt.name, "expression": mt.expression,
-                     "format": mt.format or "number", "description": mt.description or "",
-                     "tableau_formula": mt.tableau_formula}
-                    for mt in e.metrics
-                ],
-            }
-            for e in m.entities
-        ],
-    }
+from src.catalog.modelos_service import (
+    modelo_a_dict as _modelo_to_dict, guardar_entidades, crear_backup, resumen_backup,
+    restaurar as _restaurar_modelo, reimportar as _reimportar_modelo, validar_contenido,
+)
+from src.catalog.models_semantic import SemanticModelBackup
 
 
 def _save_entities(modelo: SemanticModel, entities_data: list, db: Session):
-    for e_data in entities_data:
-        entity = SemanticEntity(
-            model_id=modelo.id,
-            name=(e_data.get("name") or "").strip(),
-            description=(e_data.get("description") or "").strip() or None,
-            base_table=(e_data.get("base_table") or "").strip(),
-            joins=e_data.get("joins") or [],
-        )
-        db.add(entity)
-        db.flush()
-        for d in e_data.get("dimensions") or []:
-            db.add(SemanticDimension(
-                entity_id=entity.id,
-                name=(d.get("name") or "").strip(),
-                expression=(d.get("expression") or "").strip(),
-                data_type=d.get("data_type") or "string",
-                description=(d.get("description") or "").strip() or None,
-                tableau_formula=d.get("tableau_formula"),
-            ))
-        for mt in e_data.get("metrics") or []:
-            db.add(SemanticMetric(
-                entity_id=entity.id,
-                name=(mt.get("name") or "").strip(),
-                expression=(mt.get("expression") or "").strip(),
-                format=mt.get("format") or "number",
-                description=(mt.get("description") or "").strip() or None,
-                tableau_formula=mt.get("tableau_formula"),
-            ))
+    guardar_entidades(db, modelo, entities_data)
+
+
+def _renombrar_backups(db: Session, viejo: str, nuevo: str) -> None:
+    if nuevo and nuevo != viejo:
+        (db.query(SemanticModelBackup).filter(SemanticModelBackup.model_name == viejo)
+         .update({SemanticModelBackup.model_name: nuevo}))
 
 
 @app.get("/modelos")
@@ -1111,6 +1069,8 @@ async def api_editar_modelo(nombre: str, request: Request, db: Session = Depends
     modelo = db.query(SemanticModel).filter(SemanticModel.name == nombre).first()
     if not modelo:
         raise HTTPException(status_code=404, detail="Modelo no encontrado.")
+    crear_backup(db, modelo, "Antes de guardar el modelo completo")
+    _renombrar_backups(db, nombre, (data.get("name") or nombre).strip())
     modelo.name = (data.get("name") or nombre).strip()
     modelo.description = (data.get("description") or "").strip() or None
     modelo.updated_at = _dt.utcnow()
@@ -1128,6 +1088,7 @@ def api_eliminar_modelo(nombre: str, db: Session = Depends(get_catalog_db)):
     modelo = db.query(SemanticModel).filter(SemanticModel.name == nombre).first()
     if not modelo:
         return JSONResponse({"ok": False, "error": "Modelo no encontrado."})
+    crear_backup(db, modelo, "Antes de eliminar el modelo")
     db.delete(modelo)
     db.commit()
     return JSONResponse({"ok": True})
@@ -1233,7 +1194,7 @@ async def api_crear_campo(nombre: str, request: Request, db: Session = Depends(g
     error = _validar_campo(entity, kind, data)
     if error:
         return JSONResponse({"ok": False, "error": error})
-    campo = _KINDS[kind](entity_id=entity.id)
+    campo = _KINDS[kind](entity_id=entity.id, editado=True)
     _aplicar_campo(campo, kind, data)
     db.add(campo)
     modelo.updated_at = _dt.utcnow()
@@ -1269,6 +1230,7 @@ async def api_editar_campo(nombre: str, kind: str, campo_id: int, request: Reque
     if not campo.tableau_formula and es_sintaxis_tableau(campo.expression or ""):
         campo.tableau_formula = campo.expression
     _aplicar_campo(campo, kind, data)
+    campo.editado = True
     modelo.updated_at = _dt.utcnow()
     db.commit()
     db.refresh(campo)
@@ -1380,6 +1342,7 @@ async def api_editar_cabecera_modelo(nombre: str, request: Request, db: Session 
         return JSONResponse({"ok": False, "error": "El nombre es obligatorio."})
     if nuevo != nombre and db.query(SemanticModel).filter(SemanticModel.name == nuevo).first():
         return JSONResponse({"ok": False, "error": f"Ya existe un modelo '{nuevo}'."})
+    _renombrar_backups(db, nombre, nuevo)
     modelo.name = nuevo
     modelo.description = (data.get("description") or "").strip() or None
     modelo.updated_at = _dt.utcnow()
@@ -1430,6 +1393,8 @@ async def api_editar_entidad(nombre: str, entity_id: int, request: Request,
     datos, error = _datos_entidad(await request.json())
     if error:
         return JSONResponse({"ok": False, "error": error})
+    if (datos["base_table"], datos["joins"]) != (entity.base_table, entity.joins or []):
+        crear_backup(db, modelo, f"Antes de cambiar tabla base o joins de «{entity.name}»")
     for k, v in datos.items():
         setattr(entity, k, v)
     modelo.updated_at = _dt.utcnow()
@@ -1443,6 +1408,7 @@ def api_eliminar_entidad(nombre: str, entity_id: int, db: Session = Depends(get_
     entity = next((e for e in modelo.entities if e.id == entity_id), None)
     if entity is None:
         return JSONResponse({"ok": False, "error": "Entidad no encontrada."})
+    crear_backup(db, modelo, f"Antes de eliminar la entidad «{entity.name}»")
     db.delete(entity)
     modelo.updated_at = _dt.utcnow()
     db.commit()
@@ -1467,7 +1433,13 @@ def api_exportar_yaml(nombre: str, db: Session = Depends(get_catalog_db)):
 
 
 @app.post("/api/modelos/importar-twb")
-async def api_importar_twb(file: UploadFile = File(...), db: Session = Depends(get_catalog_db)):
+async def api_importar_twb(file: UploadFile = File(...), modo: str = Form("aplicar"),
+                           db: Session = Depends(get_catalog_db)):
+    """
+    Importa un .twb. Los modelos nuevos se crean; los existentes se fusionan sin
+    pisar campos editados a mano, tabla base ni joins (ver modelos_service.reimportar).
+    modo=preview no escribe nada y devuelve qué pasaría.
+    """
     from src.catalog.twb_parser import parse_twb
 
     content = await file.read()
@@ -1475,64 +1447,125 @@ async def api_importar_twb(file: UploadFile = File(...), db: Session = Depends(g
         datasources = parse_twb(content)
     except Exception as exc:
         return JSONResponse({"ok": False, "error": str(exc)})
+    aplicar = modo != "preview"
 
-    created: list[str] = []
-    skipped: list[str] = []
-    pendientes: dict[str, list[dict]] = {}
-    avisos: dict[str, list[str]] = {}
-
+    resultado = []
     for ds in datasources:
-        if db.query(SemanticModel).filter(SemanticModel.name == ds.model_name).first():
-            skipped.append(ds.model_name)
-            continue
+        avisos = list(ds.avisos)
+        if ds.join_tables:
+            avisos.append("El workbook también usa estas tablas; definí los joins (con su condición ON) "
+                          "en el editor: " + ", ".join(ds.join_tables))
+        item = {"name": ds.model_name, "avisos": avisos, "pendientes": ds.pendientes}
+        modelo = db.query(SemanticModel).filter(SemanticModel.name == ds.model_name).first()
 
-        modelo = SemanticModel(
-            name=ds.model_name,
-            description=ds.description,
-            updated_at=_dt.utcnow(),
-        )
-        db.add(modelo)
-        db.flush()
+        if modelo:
+            if aplicar:
+                crear_backup(db, modelo, f"Antes de reimportar {file.filename}")
+            item.update(nuevo=False, plan=_reimportar_modelo(db, modelo, ds, aplicar=aplicar))
+        else:
+            item.update(nuevo=True, dimensiones=len(ds.dimensions), metricas=len(ds.metrics))
+            if aplicar:
+                modelo = SemanticModel(name=ds.model_name, description=ds.description,
+                                       updated_at=_dt.utcnow())
+                db.add(modelo)
+                db.flush()
+                # Sin joins: el .twb no trae las condiciones y un JOIN sin ON es un producto cartesiano
+                entity = SemanticEntity(model_id=modelo.id, name=ds.caption, description=ds.description,
+                                        base_table=ds.base_table, joins=[])
+                db.add(entity)
+                db.flush()
+                for dim in ds.dimensions:
+                    db.add(SemanticDimension(
+                        entity_id=entity.id, name=dim["name"], description=dim["description"] or None,
+                        expression=dim["expression"], data_type=dim["data_type"] or "string",
+                        tableau_formula=dim.get("tableau_formula"), editado=False))
+                for met in ds.metrics:
+                    db.add(SemanticMetric(
+                        entity_id=entity.id, name=met["name"], description=met["description"] or None,
+                        expression=met["expression"], format=met["format"] or "number",
+                        tableau_formula=met.get("tableau_formula"), editado=False))
+        resultado.append(item)
 
-        joins = [{"table": t, "on": "", "type": "LEFT"} for t in ds.join_tables]
-        entity = SemanticEntity(
-            model_id=modelo.id,
-            name=ds.caption,
-            description=ds.description,
-            base_table=ds.base_table,
-            joins=joins,
-        )
-        db.add(entity)
-        db.flush()
-
-        for dim in ds.dimensions:
-            db.add(SemanticDimension(
-                entity_id=entity.id,
-                name=dim["name"],
-                description=dim["description"] or None,
-                expression=dim["expression"],
-                data_type=dim["data_type"] or "string",
-                tableau_formula=dim.get("tableau_formula"),
-            ))
-
-        for met in ds.metrics:
-            db.add(SemanticMetric(
-                entity_id=entity.id,
-                name=met["name"],
-                description=met["description"] or None,
-                expression=met["expression"],
-                format=met["format"] or "number",
-                tableau_formula=met.get("tableau_formula"),
-            ))
-
+    if aplicar:
         db.commit()
-        created.append(ds.model_name)
-        if ds.pendientes:
-            pendientes[ds.model_name] = ds.pendientes
-        if ds.avisos:
-            avisos[ds.model_name] = ds.avisos
+    else:
+        db.rollback()
+    return JSONResponse({"ok": True, "preview": not aplicar, "modelos": resultado})
 
-    return JSONResponse({
-        "ok": bool(created), "created": created, "skipped": skipped,
-        "pendientes": pendientes, "avisos": avisos,
-    })
+
+# ── Backups de modelos ────────────────────────────────────────────────────────
+
+def _backup_o_404(db: Session, backup_id: int) -> SemanticModelBackup:
+    from fastapi import HTTPException
+    b = db.query(SemanticModelBackup).filter(SemanticModelBackup.id == backup_id).first()
+    if not b:
+        raise HTTPException(status_code=404, detail="Backup no encontrado.")
+    return b
+
+
+@app.get("/api/modelos/{nombre}/backups")
+def api_listar_backups(nombre: str, db: Session = Depends(get_catalog_db)):
+    backups = (db.query(SemanticModelBackup).filter(SemanticModelBackup.model_name == nombre)
+               .order_by(SemanticModelBackup.created_at.desc(), SemanticModelBackup.id.desc()).all())
+    return JSONResponse({"ok": True, "backups": [resumen_backup(b) for b in backups]})
+
+
+@app.post("/api/modelos/{nombre}/backups")
+async def api_crear_backup(nombre: str, request: Request, db: Session = Depends(get_catalog_db)):
+    modelo = _modelo_o_404(db, nombre)
+    motivo = ((await request.json()).get("motivo") or "").strip() or "Backup manual"
+    b = crear_backup(db, modelo, motivo, automatico=False)
+    db.commit()
+    return JSONResponse({"ok": True, "backup": resumen_backup(b)})
+
+
+@app.get("/api/modelos/backups/{backup_id}/yaml")
+def api_descargar_backup(backup_id: int, db: Session = Depends(get_catalog_db)):
+    b = _backup_o_404(db, backup_id)
+    fecha = b.created_at.strftime("%Y%m%d_%H%M%S") if b.created_at else "backup"
+    return Response(
+        content=_yaml.dump(b.contenido, allow_unicode=True, default_flow_style=False, sort_keys=False),
+        media_type="text/yaml",
+        headers={"Content-Disposition": f"attachment; filename={b.model_name}_{fecha}.yaml"},
+    )
+
+
+@app.post("/api/modelos/backups/{backup_id}/restaurar")
+def api_restaurar_backup(backup_id: int, db: Session = Depends(get_catalog_db)):
+    """Vuelve el modelo al estado del backup (antes guarda un backup del estado actual)."""
+    b = _backup_o_404(db, backup_id)
+    fecha = b.created_at.strftime("%d/%m/%Y %H:%M") if b.created_at else ""
+    modelo = _restaurar_modelo(db, b.contenido, b.model_name, f"Antes de restaurar el backup del {fecha}")
+    db.commit()
+    return JSONResponse({"ok": True, "name": modelo.name})
+
+
+@app.get("/api/modelos-eliminados")
+def api_modelos_eliminados(db: Session = Depends(get_catalog_db)):
+    """Modelos que ya no existen pero tienen backups (para poder recuperarlos)."""
+    existentes = {n for (n,) in db.query(SemanticModel.name).all()}
+    ultimos: dict[str, SemanticModelBackup] = {}
+    for b in db.query(SemanticModelBackup).order_by(SemanticModelBackup.created_at.desc()).all():
+        if b.model_name not in existentes and b.model_name not in ultimos:
+            ultimos[b.model_name] = b
+    return JSONResponse({"ok": True, "modelos": [resumen_backup(b) for b in ultimos.values()]})
+
+
+@app.post("/api/modelos/importar-yaml")
+async def api_importar_yaml(file: UploadFile = File(...), db: Session = Depends(get_catalog_db)):
+    """
+    Carga un modelo exportado en YAML. Si ya existe uno con ese nombre lo reemplaza
+    (guardando antes un backup); si no, lo crea.
+    """
+    try:
+        contenido = _yaml.safe_load((await file.read()).decode("utf-8"))
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": f"No se pudo leer el YAML: {exc}"})
+    error = validar_contenido(contenido)
+    if error:
+        return JSONResponse({"ok": False, "error": error})
+    nombre = str(contenido["name"]).strip()
+    existia = db.query(SemanticModel).filter(SemanticModel.name == nombre).first() is not None
+    _restaurar_modelo(db, contenido, nombre, f"Antes de cargar {file.filename}")
+    db.commit()
+    return JSONResponse({"ok": True, "name": nombre, "reemplazado": existia})

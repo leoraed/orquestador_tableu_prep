@@ -39,13 +39,16 @@
         <label class="form-label small fw-semibold mb-1">Nombre del modelo</label>
         <input type="text" id="modelName" class="form-control form-control-sm">
       </div>
-      <div class="col-md-6">
+      <div class="col-md-5">
         <label class="form-label small fw-semibold mb-1">Descripción</label>
         <input type="text" id="modelDesc" class="form-control form-control-sm" placeholder="Descripción del modelo...">
       </div>
-      <div class="col-md-2">
-        <button class="btn btn-outline-primary btn-sm w-100" onclick="guardarCabecera()">
+      <div class="col-md-3 d-flex gap-2">
+        <button class="btn btn-outline-primary btn-sm flex-fill" onclick="guardarCabecera()">
           <i class="bi bi-check-lg me-1"></i>Guardar
+        </button>
+        <button class="btn btn-outline-secondary btn-sm flex-fill" onclick="abrirBackups()">
+          <i class="bi bi-clock-history me-1"></i>Backups
         </button>
       </div>
     </div>
@@ -231,6 +234,32 @@
     <datalist id="tablasSugeridas">
       {% for t in tablas_catalogo %}<option value="{{ t }}">{% endfor %}
     </datalist>
+  </div>
+</div>
+
+<!-- Modal backups -->
+<div class="modal fade" id="modalBackups" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title fw-bold"><i class="bi bi-clock-history me-2"></i>Backups del modelo</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="small text-muted">
+          Se guarda uno automático antes de reimportar, restaurar, cambiar tabla base o joins y eliminar.
+          Restaurar vuelve el modelo completo a ese momento (el estado actual queda guardado como otro backup).
+        </p>
+        <div class="input-group input-group-sm mb-3">
+          <input id="motivoBackup" class="form-control" placeholder="Motivo (ej: antes de convertir los pendientes)">
+          <button class="btn btn-outline-primary" onclick="crearBackup()"><i class="bi bi-plus-lg me-1"></i>Crear backup ahora</button>
+        </div>
+        <table class="table table-sm mb-0">
+          <thead><tr class="small text-muted"><th>Fecha</th><th>Motivo</th><th>Campos</th><th></th></tr></thead>
+          <tbody id="tbodyBackups"></tbody>
+        </table>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -703,6 +732,43 @@ async function eliminarEntidad(i) {
   if (actual && actual.entity_id === e.id) cerrarPanel(); else renderLista();
   renderEntidades();
   toast('Entidad eliminada.');
+}
+
+// ── Backups ──────────────────────────────────────────────────────────────────
+async function abrirBackups() {
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('modalBackups')).show();
+  const tbody = document.getElementById('tbodyBackups');
+  tbody.innerHTML = '<tr><td colspan="4" class="small text-muted">Cargando…</td></tr>';
+  const d = await req('GET', '/backups');
+  const fecha = (iso) => new Date(iso + 'Z').toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' });
+  tbody.innerHTML = d.backups.map(b => `<tr>
+    <td class="small text-nowrap">${fecha(b.created_at)}</td>
+    <td class="small">${esc(b.motivo)} ${b.automatico ? '' : '<span class="badge text-bg-light border">manual</span>'}</td>
+    <td class="small">${b.campos}</td>
+    <td class="text-end text-nowrap">
+      <a class="btn btn-sm btn-outline-secondary py-0" href="/api/modelos/backups/${b.id}/yaml" download title="Descargar YAML">
+        <i class="bi bi-download"></i></a>
+      <button class="btn btn-sm btn-outline-primary py-0" onclick="restaurarBackup(${b.id})">
+        <i class="bi bi-arrow-counterclockwise me-1"></i>Restaurar</button>
+    </td></tr>`).join('') || '<tr><td colspan="4" class="small text-muted">Todavía no hay backups.</td></tr>';
+}
+
+async function crearBackup() {
+  const motivo = document.getElementById('motivoBackup').value.trim();
+  const d = await req('POST', '/backups', { motivo });
+  if (!d.ok) { toast(d.error, false); return; }
+  document.getElementById('motivoBackup').value = '';
+  toast('Backup creado.');
+  abrirBackups();
+}
+
+async function restaurarBackup(id) {
+  if (dirty && !confirm('Hay cambios sin guardar en el campo abierto. Se van a perder. ¿Seguir?')) return;
+  if (!confirm('¿Restaurar el modelo a este backup? El estado actual se guarda como otro backup.')) return;
+  const r = await fetch(`/api/modelos/backups/${id}/restaurar`, { method: 'POST' }).then(r => r.json());
+  if (!r.ok) { toast(r.error, false); return; }
+  setDirty(false);
+  location.href = `/modelos/${encodeURIComponent(r.name)}`;
 }
 
 // ── Init ─────────────────────────────────────────────────────────────────────
