@@ -1,13 +1,25 @@
 from dotenv import load_dotenv
 load_dotenv(".env")
 
-from src.catalog.sql_compiler import consultar, ConsultaError
+import pymysql, os
 
-try:
-    r = consultar("modelo_dashboard_marketing", ["Ventas"], ["Provincia"], limite=5)
-    print("SQL:", r["sql"])
-    print("Filas:", r["filas"])
-except ConsultaError as e:
-    print("ConsultaError:", e)
-except Exception as e:
-    print("Error:", e)
+conn = pymysql.connect(
+    host=os.getenv("CATALOG_MYSQL_HOST"),
+    port=int(os.getenv("CATALOG_MYSQL_PORT", "3306")),
+    database=os.getenv("CATALOG_MYSQL_DB"),
+    user=os.getenv("CATALOG_MYSQL_USER"),
+    password=os.getenv("CATALOG_MYSQL_PASSWORD"),
+)
+cur = conn.cursor()
+
+for pattern in ["%proxy%", "%marketing%", "%dashboard%", "%sqlproxy%"]:
+    cur.execute("SHOW TABLES LIKE %s", (pattern,))
+    rows = cur.fetchall()
+    if rows:
+        print(f"LIKE '{pattern}':", rows)
+
+cur.execute("SHOW FULL TABLES WHERE Table_type = 'VIEW'")
+views = cur.fetchall()
+print("\nVistas:", views[:20])
+
+conn.close()
