@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import time
+from datetime import date, timedelta
 
 import pymysql
 import pymysql.cursors
@@ -88,6 +89,35 @@ def _esc(expr: str) -> str:
     return expr.replace("%", "%%")
 
 
+_DATE_TYPES = {"date", "datetime"}
+_YM_RE = re.compile(r"^\d{4}-\d{2}$")
+_YMD_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _bound_date(valor: str, es_hasta: bool) -> str:
+    """
+    Convierte un límite de periodo (YYYY-MM o YYYY-MM-DD) a fecha YYYY-MM-DD.
+    'desde' → primer día incluido; 'hasta' → primer día EXCLUIDO (rango semiabierto),
+    así un campo datetime incluye todo el último día.
+    """
+    try:
+        if _YM_RE.match(valor):
+            d = date.fromisoformat(f"{valor}-01")
+            if es_hasta:
+                d = date(d.year + d.month // 12, d.month % 12 + 1, 1)
+        elif _YMD_RE.match(valor):
+            d = date.fromisoformat(valor)
+            if es_hasta:
+                d += timedelta(days=1)
+        else:
+            raise ValueError
+    except ValueError:
+        raise ConsultaError(
+            f"Valor de periodo inválido: {valor!r}. Usá YYYY-MM o YYYY-MM-DD."
+        )
+    return d.isoformat()
+
+
 def _build_sql(entity, dim_map, met_map, dimensiones, metricas, filtros, periodo, limite):
     params: list = []
 
@@ -127,7 +157,14 @@ def _build_sql(entity, dim_map, met_map, dimensiones, metricas, filtros, periodo
         hasta = periodo.get("hasta")
         if campo and campo in dim_map:
             expr = _esc(dim_map[campo].expression)
-            if desde and hasta:
+            if (dim_map[campo].data_type or "").lower() in _DATE_TYPES:
+                if desde:
+                    where.append(f"  {expr} >= %s")
+                    params.append(_bound_date(desde, es_hasta=False))
+                if hasta:
+                    where.append(f"  {expr} < %s")
+                    params.append(_bound_date(hasta, es_hasta=True))
+            elif desde and hasta:
                 where.append(f"  {expr} BETWEEN %s AND %s")
                 params.extend([desde, hasta])
             elif desde:
@@ -168,7 +205,9 @@ def consultar(
         metricas:    Lista de nombres de métricas declaradas en el modelo.
         dimensiones: Lista de nombres de dimensiones declaradas en el modelo.
         filtros:     {"dimension": valor} — solo dimensiones del modelo.
-        periodo:     {"campo": "mes", "desde": "2024-01", "hasta": "2024-12"}
+        periodo:     {"campo": "Fecha", "desde": "2024-01", "hasta": "2024-12"}
+                     Si el campo es date/datetime acepta YYYY-MM o YYYY-MM-DD
+                     (ambos extremos inclusive); si no, compara el valor tal cual.
         limite:      Máximo de filas (tope: DW_MAX_ROWS).
 
     Returns:

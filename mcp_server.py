@@ -205,7 +205,9 @@ def get_yaml(nombre: str) -> str:
     "  metricas    — lista de nombres de métricas declaradas en el modelo.\n"
     "  dimensiones — lista de nombres de dimensiones para agrupar.\n"
     "  filtros     — dict {dimension: valor} para filtrar (opcional).\n"
-    "  periodo     — dict {campo, desde, hasta} en formato YYYY-MM (opcional).\n"
+    "  periodo     — dict {campo, desde, hasta} (opcional). Si campo es una dimensión\n"
+    "                date/datetime (ej. Fecha), desde/hasta van en YYYY-MM o YYYY-MM-DD,\n"
+    "                ambos inclusive. Si es string (ej. mes), se compara tal cual.\n"
     "  limite      — máximo de filas a devolver (default 1000, máx 5000)."
 ))
 def consultar(
@@ -222,7 +224,7 @@ def consultar(
         metricas:    Ej: ["Ventas", "Leads"].
         dimensiones: Ej: ["mes", "provincia"].
         filtros:     Ej: {"provincia": "Buenos Aires"}.
-        periodo:     Ej: {"campo": "mes", "desde": "2024-01", "hasta": "2024-12"}.
+        periodo:     Ej: {"campo": "Fecha", "desde": "2024-01", "hasta": "2024-12"}.
         limite:      Máximo de filas (tope interno: 5000).
     """
     try:
