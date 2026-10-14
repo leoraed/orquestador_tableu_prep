@@ -1,36 +1,79 @@
+"""
+Actualiza las expresiones del piloto en modelo_dashboard_marketing.
+Ejecutar una sola vez después de confirmar que el SQL funciona.
+"""
 from dotenv import load_dotenv
 load_dotenv(".env")
 
-import pymysql, os
+from src.catalog.db import SessionCatalog
+from src.catalog.models_semantic import SemanticModel, SemanticDimension, SemanticMetric
 
-conn = pymysql.connect(
-    host=os.getenv("CATALOG_MYSQL_HOST"),
-    port=int(os.getenv("CATALOG_MYSQL_PORT", "3306")),
-    database=os.getenv("CATALOG_MYSQL_DB"),
-    user=os.getenv("CATALOG_MYSQL_USER"),
-    password=os.getenv("CATALOG_MYSQL_PASSWORD"),
-)
-cur = conn.cursor()
+MODELO = "modelo_dashboard_marketing"
+BASE_TABLE = "stagedata_marketing_link"
 
-sql = """
-SELECT
-  Provincia,
-  DATE_FORMAT(Fecha, '%Y-%m') AS mes,
-  COUNT(DISTINCT CASE WHEN Source = 'Ventas' THEN id_direccion END) AS Ventas,
-  COUNT(DISTINCT CASE WHEN Source = 'Leads' THEN id_direccion END) AS Leads,
-  COUNT(DISTINCT CASE WHEN Source = 'Activacion' THEN id_direccion END) AS Activaciones
-FROM stagedata_marketing_link
-WHERE Fecha >= '2024-01-01'
-GROUP BY Provincia, mes
-ORDER BY mes DESC, Ventas DESC
-LIMIT 20
-"""
+DIMS = {
+    "Provincia":  "Provincia",
+    "mes":        "DATE_FORMAT(Fecha, '%Y-%m')",
+    "Pais":       "Pais",
+    "Fecha":      "Fecha",
+    "segmento":   "segmento",
+    "Descuento":  "Descuento",
+    "cliente_id": "cliente_id",
+}
 
-cur.execute(sql)
-rows = cur.fetchall()
-print(f"{'Provincia':<20} {'Mes':<10} {'Ventas':>8} {'Leads':>8} {'Activaciones':>12}")
-print("-" * 62)
-for r in rows:
-    print(f"{str(r[0] or ''):<20} {str(r[1] or ''):<10} {r[2]:>8} {r[3]:>8} {r[4]:>12}")
+METS = {
+    "Ventas":       "COUNT(DISTINCT CASE WHEN Source = 'Ventas' THEN id_direccion END)",
+    "Leads":        "COUNT(DISTINCT CASE WHEN Source = 'Leads' THEN id_direccion END)",
+    "Activaciones": "COUNT(DISTINCT CASE WHEN Source = 'Activacion' THEN id_direccion END)",
+}
 
-conn.close()
+db = SessionCatalog()
+try:
+    m = db.query(SemanticModel).filter(SemanticModel.name == MODELO).first()
+    if not m:
+        print(f"Modelo '{MODELO}' no encontrado.")
+        exit(1)
+
+    entity = m.entities[0]
+
+    # Actualizar tabla base
+    entity.base_table = BASE_TABLE
+    print(f"base_table → {BASE_TABLE}")
+
+    # Actualizar dimensiones
+    for d in entity.dimensions:
+        if d.name in DIMS:
+            old = d.expression
+            d.expression = DIMS[d.name]
+            print(f"  DIM  {d.name!r}: {old!r} → {d.expression!r}")
+
+    # Actualizar métricas
+    for mt in entity.metrics:
+        if mt.name in METS:
+            old = mt.expression
+            mt.expression = METS[mt.name]
+            print(f"  MET  {mt.name!r}: {old!r} → {mt.expression!r}")
+
+    db.commit()
+    print("\nListo. Modelo actualizado.")
+finally:
+    db.close()
+
+# Verificar con consultar()
+print("\n--- Test consultar() ---")
+from src.catalog.sql_compiler import consultar, ConsultaError
+try:
+    r = consultar(
+        modelo=MODELO,
+        metricas=["Ventas", "Leads"],
+        dimensiones=["Provincia"],
+        limite=10,
+    )
+    print(r["sql"])
+    print(f"{r['total']} filas en {r['tiempo_ms']}ms")
+    for row in r["filas"]:
+        print(row)
+except ConsultaError as e:
+    print("ConsultaError:", e)
+except Exception as e:
+    print("Error:", e)
