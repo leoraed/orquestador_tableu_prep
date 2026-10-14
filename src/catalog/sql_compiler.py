@@ -83,15 +83,20 @@ def _render_sql(template: str, params: list) -> str:
     return rendered
 
 
+def _esc(expr: str) -> str:
+    """Escape % in expressions so pymysql doesn't treat them as placeholders."""
+    return expr.replace("%", "%%")
+
+
 def _build_sql(entity, dim_map, met_map, dimensiones, metricas, filtros, periodo, limite):
     params: list = []
 
     # SELECT
     selects = []
     for d in dimensiones:
-        selects.append(f"  {dim_map[d].expression} AS `{d}`")
+        selects.append(f"  {_esc(dim_map[d].expression)} AS `{d}`")
     for m in metricas:
-        selects.append(f"  {met_map[m].expression} AS `{m}`")
+        selects.append(f"  {_esc(met_map[m].expression)} AS `{m}`")
     sql = "SELECT\n" + ",\n".join(selects) + "\n"
 
     # FROM
@@ -113,7 +118,7 @@ def _build_sql(entity, dim_map, met_map, dimensiones, metricas, filtros, periodo
     # WHERE
     where = []
     for campo, valor in (filtros or {}).items():
-        where.append(f"  {dim_map[campo].expression} = %s")
+        where.append(f"  {_esc(dim_map[campo].expression)} = %s")
         params.append(valor)
 
     if periodo:
@@ -121,7 +126,7 @@ def _build_sql(entity, dim_map, met_map, dimensiones, metricas, filtros, periodo
         desde = periodo.get("desde")
         hasta = periodo.get("hasta")
         if campo and campo in dim_map:
-            expr = dim_map[campo].expression
+            expr = _esc(dim_map[campo].expression)
             if desde and hasta:
                 where.append(f"  {expr} BETWEEN %s AND %s")
                 params.extend([desde, hasta])
@@ -137,7 +142,7 @@ def _build_sql(entity, dim_map, met_map, dimensiones, metricas, filtros, periodo
 
     # GROUP BY (solo si hay métricas — son agregados)
     if metricas and dimensiones:
-        group_exprs = [dim_map[d].expression for d in dimensiones]
+        group_exprs = [_esc(dim_map[d].expression) for d in dimensiones]
         sql += "GROUP BY\n  " + ",\n  ".join(group_exprs) + "\n"
 
     # LIMIT
