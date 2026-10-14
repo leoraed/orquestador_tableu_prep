@@ -29,6 +29,7 @@ load_dotenv(Path(__file__).parent / ".env")
 
 from src.catalog.db import SessionCatalog
 from src.catalog.models_semantic import SemanticModel
+from src.catalog.sql_compiler import consultar as _consultar, ConsultaError
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -38,7 +39,9 @@ mcp = _MCPClass(
     instructions=(
         "Tenés acceso a los modelos semánticos del Orquestador Tableau Prep. "
         "Empezá con listar_modelos para ver qué modelos hay, luego usá get_modelo o "
-        "buscar_campos para encontrar las métricas y dimensiones relevantes."
+        "buscar_campos para encontrar las métricas y dimensiones relevantes. "
+        "Para ejecutar consultas usá consultar(), que compila SQL desde el modelo "
+        "y devuelve filas + SQL auditado. Nunca escribas SQL libre."
     ),
 )
 
@@ -191,6 +194,70 @@ def get_yaml(nombre: str) -> str:
         )
     finally:
         db.close()
+
+
+@mcp.tool(description=(
+    "Ejecuta una consulta sobre el DW a partir del modelo semántico. "
+    "El SQL se compila automáticamente; nunca escribas SQL libre. "
+    "Devuelve filas, columnas y el SQL generado para auditoría.\n\n"
+    "Parámetros:\n"
+    "  modelo      — nombre exacto del modelo (obtenelo con listar_modelos).\n"
+    "  metricas    — lista de nombres de métricas declaradas en el modelo.\n"
+    "  dimensiones — lista de nombres de dimensiones para agrupar.\n"
+    "  filtros     — dict {dimension: valor} para filtrar (opcional).\n"
+    "  periodo     — dict {campo, desde, hasta} en formato YYYY-MM (opcional).\n"
+    "  limite      — máximo de filas a devolver (default 1000, máx 5000)."
+))
+def consultar(
+    modelo: str,
+    metricas: list[str],
+    dimensiones: list[str],
+    filtros: dict | None = None,
+    periodo: dict | None = None,
+    limite: int = 1000,
+) -> str:
+    """
+    Args:
+        modelo:      Nombre del modelo semántico.
+        metricas:    Ej: ["Ventas", "Leads"].
+        dimensiones: Ej: ["mes", "provincia"].
+        filtros:     Ej: {"provincia": "Buenos Aires"}.
+        periodo:     Ej: {"campo": "mes", "desde": "2024-01", "hasta": "2024-12"}.
+        limite:      Máximo de filas (tope interno: 5000).
+    """
+    try:
+        result = _consultar(
+            modelo=modelo,
+            metricas=metricas,
+            dimensiones=dimensiones,
+            filtros=filtros,
+            periodo=periodo,
+            limite=limite,
+        )
+    except ConsultaError as e:
+        return f"Error de validación: {e}"
+    except Exception as e:
+        logger.exception("consultar: error inesperado")
+        return f"Error al ejecutar la consulta: {e}"
+
+    lines = [
+        f"**SQL generado:**\n```sql\n{result['sql']}\n```\n",
+        f"**{result['total']} filas** en {result['tiempo_ms']} ms\n",
+    ]
+
+    if result["filas"]:
+        header = " | ".join(result["columnas"])
+        sep = " | ".join("---" for _ in result["columnas"])
+        rows_md = "\n".join(
+            " | ".join(str(v) for v in row) for row in result["filas"][:50]
+        )
+        lines.append(f"{header}\n{sep}\n{rows_md}")
+        if result["total"] > 50:
+            lines.append(f"\n*(mostrando 50 de {result['total']} filas)*")
+    else:
+        lines.append("*Sin resultados para los filtros aplicados.*")
+
+    return "\n".join(lines)
 
 
 # ── run ───────────────────────────────────────────────────────────────────────
