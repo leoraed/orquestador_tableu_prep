@@ -1060,6 +1060,7 @@ async def api_importar_twb(file: UploadFile = File(...), db: Session = Depends(g
 
     created: list[str] = []
     skipped: list[str] = []
+    pendientes: dict[str, list[dict]] = {}
 
     for ds in datasources:
         if db.query(SemanticModel).filter(SemanticModel.name == ds.model_name).first():
@@ -1105,5 +1106,10 @@ async def api_importar_twb(file: UploadFile = File(...), db: Session = Depends(g
 
         db.commit()
         created.append(ds.model_name)
+        if ds.pendientes:
+            pendientes[ds.model_name] = ds.pendientes
 
-    return JSONResponse({"ok": bool(created), "created": created, "skipped": skipped})
+    return JSONResponse({
+        "ok": bool(created), "created": created, "skipped": skipped,
+        "pendientes": pendientes,
+    })

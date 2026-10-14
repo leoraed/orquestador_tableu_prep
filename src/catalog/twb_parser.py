@@ -3,6 +3,8 @@ import xml.etree.ElementTree as ET
 from collections import defaultdict
 from dataclasses import dataclass, field
 
+from src.catalog.tableau_to_sql import NoTraducible, make_resolver, translate_formula
+
 
 @dataclass
 class TwbDatasource:
@@ -13,46 +15,12 @@ class TwbDatasource:
     join_tables: list[str] = field(default_factory=list)
     dimensions: list[dict] = field(default_factory=list)
     metrics: list[dict] = field(default_factory=list)
+    # Campos que quedaron con la fórmula Tableau original: {name, kind, reason}
+    pendientes: list[dict] = field(default_factory=list)
 
 
 def _clean(name: str) -> str:
     return name.strip("[]")
-
-
-# Simple Tableau bracket reference: [column] or [table].[column] with no operators
-_SIMPLE_BRACKET_RE = re.compile(r"^\[([^\[\]]+)\](?:\.\[([^\[\]]+)\])?$")
-
-# Tableau formula patterns (anything beyond a plain bracket reference)
-_TABLEAU_FORMULA_RE = re.compile(
-    r"IF\s+.+THEN|\bIIF\s*\(|\bZN\s*\(|\bATTR\s*\(|\bFIXED\s*\{"
-    r"|\bINCLUDE\s*\{|\bEXCLUDE\s*\{|\[Calculation_\d+\]"
-    r"|=|<|>|\bAND\b|\bOR\b|\bNOT\b|\bCASE\b|\bWHEN\b",
-    re.IGNORECASE,
-)
-
-
-def _normalize_expression(formula: str, col_name: str, ctmap: dict) -> str:
-    """
-    Convert a TWB expression to MySQL SQL where possible.
-    - Simple bracket refs like [column] or [table].[column] → table.column
-    - Complex Tableau formulas (IF/THEN, calculations, operators) → kept as-is
-      (will be flagged at query time)
-    - Empty formula → fall back to ctmap or col_name
-    """
-    if not formula:
-        if col_name in ctmap:
-            return f"`{ctmap[col_name]}`.`{_clean(col_name)}`"
-        return f"`{_clean(col_name)}`"
-
-    m = _SIMPLE_BRACKET_RE.match(formula.strip())
-    if m and not _TABLEAU_FORMULA_RE.search(formula):
-        table_part, col_part = m.group(1), m.group(2)
-        if col_part:
-            return f"`{table_part}`.`{col_part}`"
-        return f"`{table_part}`"
-
-    # Complex Tableau formula — keep raw so the editor can show it
-    return formula
 
 
 def _safe_name(caption: str) -> str:
@@ -74,7 +42,7 @@ def parse_twb(content: bytes) -> list[TwbDatasource]:
 
     # ── Step 1: build full column index per datasource ──────────────────────
     col_defs: dict[str, dict] = {}      # ds_name -> {col_name: info_dict}
-    col_table: dict[str, dict] = {}     # ds_name -> {col_name: table_name}
+    col_table: dict[str, dict] = {}     # ds_name -> {col_name: (table, remote_col)}
     ds_tables: dict[str, list] = {}     # ds_name -> [table_names]
     ds_captions: dict[str, str] = {}    # ds_name -> human caption
 
@@ -102,7 +70,8 @@ def parse_twb(content: bytes) -> list[TwbDatasource]:
                     key = m.get("key", "")
                     val = m.get("value", "")
                     if "].[" in val:
-                        col_table[ds_name][key] = val.split("].[")[0].strip("[]")
+                        table, remote = val.split("].[", 1)
+                        col_table[ds_name][key] = (table.strip("[]"), remote.strip("[]"))
 
         for col in ds.findall("column"):
             name = col.get("name", "")
@@ -148,8 +117,15 @@ def parse_twb(content: bytes) -> list[TwbDatasource]:
         # Use worksheet-filtered set; fall back to all columns if no worksheets
         candidate_names = used.get(ds_name) or set(defs.keys())
 
+        # Referencias se resuelven contra TODAS las columnas del datasource,
+        # no solo las usadas en hojas (los cálculos intermedios no se importan).
+        resolve = make_resolver(
+            defs, ctmap, tables[0] if tables else "", set(ds_captions), ds_name
+        )
+
         dimensions: list[dict] = []
         metrics: list[dict] = []
+        pendientes: list[dict] = []
         seen_captions: set[str] = set()
 
         for fn in candidate_names:
@@ -166,7 +142,18 @@ def parse_twb(content: bytes) -> list[TwbDatasource]:
                 continue
             seen_captions.add(display)
 
-            expression = _normalize_expression(info["formula"], fn, ctmap)
+            formula = info["formula"]
+            try:
+                expression = translate_formula(formula, resolve) if formula else resolve(fn)
+            except NoTraducible as exc:
+                # Se guarda la fórmula original; el compilador la rechaza y el
+                # editor la muestra para convertirla a mano.
+                expression = formula
+                pendientes.append({
+                    "name": display,
+                    "kind": "dimension" if role == "dimension" else "metric",
+                    "reason": str(exc),
+                })
 
             if role == "dimension":
                 dimensions.append({
@@ -194,6 +181,7 @@ def parse_twb(content: bytes) -> list[TwbDatasource]:
             join_tables=tables[1:],
             dimensions=dimensions,
             metrics=metrics,
+            pendientes=sorted(pendientes, key=lambda x: x["name"]),
         ))
 
     return results
