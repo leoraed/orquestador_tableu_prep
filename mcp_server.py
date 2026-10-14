@@ -197,5 +197,5 @@ def get_yaml(nombre: str) -> str:
 
 if __name__ == "__main__":
     logger.info("Iniciando MCP server en http://0.0.0.0:8001/sse")
-    app = mcp.sse_app()
+    app = mcp.sse_app(host="0.0.0.0")
     uvicorn.run(app, host="0.0.0.0", port=8001)
