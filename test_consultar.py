@@ -8,7 +8,7 @@ try:
         modelo="modelo_dashboard_marketing",
         metricas=["Ventas", "Leads"],
         dimensiones=["Provincia"],
-        periodo={"campo": "mes", "desde": "2024-01", "hasta": "2024-12"},
+        periodo={"campo": "Fecha", "desde": "2024-01-01", "hasta": "2024-12-31"},
         limite=50,
     )
     print(r["sql"])
