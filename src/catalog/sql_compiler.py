@@ -94,9 +94,9 @@ def _build_sql(entity, dim_map, met_map, dimensiones, metricas, filtros, periodo
     # SELECT
     selects = []
     for d in dimensiones:
-        selects.append(f"  {_esc(dim_map[d].expression)} AS `{d}`")
+        selects.append(f"  {_esc(dim_map[d].expression)} AS `{_esc(d)}`")
     for m in metricas:
-        selects.append(f"  {_esc(met_map[m].expression)} AS `{m}`")
+        selects.append(f"  {_esc(met_map[m].expression)} AS `{_esc(m)}`")
     sql = "SELECT\n" + ",\n".join(selects) + "\n"
 
     # FROM
