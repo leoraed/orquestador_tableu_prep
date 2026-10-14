@@ -12,14 +12,15 @@ conn = pymysql.connect(
 )
 cur = conn.cursor()
 
-for pattern in ["%proxy%", "%marketing%", "%dashboard%", "%sqlproxy%"]:
-    cur.execute("SHOW TABLES LIKE %s", (pattern,))
-    rows = cur.fetchall()
-    if rows:
-        print(f"LIKE '{pattern}':", rows)
+cur.execute("DESCRIBE stagedata_marketing_link")
+print("=== stagedata_marketing_link ===")
+for row in cur.fetchall():
+    print(row)
 
-cur.execute("SHOW FULL TABLES WHERE Table_type = 'VIEW'")
-views = cur.fetchall()
-print("\nVistas:", views[:20])
+print()
+cur.execute("SELECT DISTINCT Source FROM stagedata_marketing_link LIMIT 30")
+print("=== Valores de Source ===")
+for row in cur.fetchall():
+    print(row)
 
 conn.close()
