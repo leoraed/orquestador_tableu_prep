@@ -12,6 +12,7 @@
   .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
   .dot-sql { background: var(--bs-success); }
   .dot-pendiente { background: transparent; border: 2px solid var(--bs-warning); }
+  .dot-error { background: var(--bs-danger); }
   .grupo-titulo { font-size: .7rem; letter-spacing: .6px; }
   .CodeMirror { height: auto; min-height: 140px; border: 1px solid #dee2e6; border-radius: .375rem; font-size: .85rem; }
   .CodeMirror-scroll { min-height: 140px; }
@@ -87,9 +88,14 @@
               </select>
               <select id="filtroEstado" class="form-select form-select-sm" onchange="renderLista()">
                 <option value="">Todo estado</option>
-                <option value="sql">SQL válido</option>
+                <option value="sql">Funcionan</option>
+                <option value="error">Con error</option>
                 <option value="pendiente">Pendientes</option>
               </select>
+              <button class="btn btn-outline-secondary btn-sm text-nowrap" id="btnValidar" onclick="validarTodo()"
+                title="Compila todos los campos contra el DW">
+                <i class="bi bi-check2-all"></i>
+              </button>
               <div class="dropdown">
                 <button class="btn btn-primary btn-sm dropdown-toggle" data-bs-toggle="dropdown" title="Nuevo campo">
                   <i class="bi bi-plus-lg"></i>
@@ -157,6 +163,7 @@
             <div class="small text-warning-emphasis mt-1 d-none" id="avisoTableau">
               <i class="bi bi-exclamation-triangle me-1"></i>La expresión tiene sintaxis de Tableau: el compilador la va a rechazar.
             </div>
+            <div class="alert alert-danger small py-1 px-2 mt-2 mb-0 d-none" id="pError"></div>
 
             <!-- Fórmula original -->
             <details class="mt-3 d-none" id="pOriginalWrap">
@@ -257,7 +264,7 @@ let cargando = false;    // evita marcar dirty al cargar el editor
 const TIPOS_DIM = ['string', 'date', 'datetime', 'integer', 'float', 'boolean'];
 const FORMATOS = ['number', 'percent', 'currency'];
 // Igual que es_sintaxis_tableau() en sql_compiler.py (el servidor decide al guardar)
-const TABLEAU_RE = /\[Calculation_\d+\]|\bIF\s+.+THEN|\bIIF\s*\(|\bZN\s*\(|\bATTR\s*\(|\b(FIXED|INCLUDE|EXCLUDE)\s*\{|\bDATEPART\s*\(|\bCOUNTD\s*\(|\b(TODAY|DATETRUNC|DATEADD)\s*\(|\bELSEIF\b|\[[^\]\n']+\]/i;
+const TABLEAU_RE = /\[Calculation_\d+\]|\bIF\s+[\s\S]+?\bTHEN\b|__tableau_internal_object_id__|\bIIF\s*\(|\bZN\s*\(|\bATTR\s*\(|\b(FIXED|INCLUDE|EXCLUDE)\s*\{|\bDATEPART\s*\(|\bCOUNTD\s*\(|\b(TODAY|DATETRUNC|DATEADD)\s*\(|\bELSEIF\b|\[[^\]\n']+\]/i;
 
 const api = (path) => `/api/modelos/${encodeURIComponent(modeloNombre)}${path}`;
 const esc = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -309,6 +316,41 @@ document.addEventListener('keydown', (e) => {
 });
 window.addEventListener('beforeunload', (e) => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
 
+// ── Validación contra el DW ──────────────────────────────────────────────────
+// errores[clave] = mensaje si el campo no compila en el DW; ausente si funciona o no se probó
+let errores = {};
+let validado = false;
+const ESTADO_TITULO = { sql: 'Funciona en el DW', error: 'Error en el DW', pendiente: 'Pendiente: sintaxis Tableau' };
+
+function estadoDe(c) {
+  if (c.estado === 'pendiente') return 'pendiente';
+  return errores[clave(c)] ? 'error' : 'sql';
+}
+
+async function validarTodo() {
+  const btn = document.getElementById('btnValidar');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+  try {
+    const d = await req('POST', '/validar');
+    if (!d.ok) { toast('No se pudo validar: ' + d.error, false); return; }
+    errores = Object.fromEntries(Object.entries(d.resultados).filter(([, e]) => e));
+    validado = true;
+    renderLista();
+    if (actual) mostrarErrorPanel();
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-check2-all"></i>';
+  }
+}
+
+function mostrarErrorPanel() {
+  const el = document.getElementById('pError');
+  const err = actual?.id ? errores[clave(actual)] : null;
+  el.classList.toggle('d-none', !err);
+  el.innerHTML = err ? `<i class="bi bi-x-octagon me-1"></i><strong>Error en el DW:</strong> ${esc(err)}` : '';
+}
+
 // ── Lista ────────────────────────────────────────────────────────────────────
 function renderLista() {
   const q = document.getElementById('buscar').value.trim().toLowerCase();
@@ -316,7 +358,7 @@ function renderLista() {
   const estado = document.getElementById('filtroEstado').value;
 
   const visibles = campos.filter(c =>
-    (!tipo || c.kind === tipo) && (!estado || c.estado === estado) &&
+    (!tipo || c.kind === tipo) && (!estado || estadoDe(c) === estado) &&
     (!q || [c.name, c.expression, c.description].some(v => (v || '').toLowerCase().includes(q))));
 
   const grupo = (kind, titulo) => {
@@ -325,8 +367,8 @@ function renderLista() {
     return `<div class="px-3 pt-2 pb-1 text-muted text-uppercase fw-semibold grupo-titulo">${titulo} (${items.length})</div>` +
       items.map(c => `
         <div class="campo-item d-flex align-items-center gap-2 px-3 py-1 ${actual && actual.id === c.id && actual.kind === c.kind ? 'activo' : ''}"
-             onclick="abrirCampo('${c.kind}', ${c.id})" title="${esc(c.estado === 'pendiente' ? 'Pendiente: sintaxis Tableau' : 'SQL válido')}">
-          <span class="dot dot-${c.estado}"></span>
+             onclick="abrirCampo('${c.kind}', ${c.id})" title="${esc(errores[clave(c)] || ESTADO_TITULO[estadoDe(c)])}">
+          <span class="dot dot-${estadoDe(c)}"></span>
           <span class="nombre small">${esc(c.name)}</span>
         </div>`).join('');
   };
@@ -334,10 +376,11 @@ function renderLista() {
   document.getElementById('lista').innerHTML = html ||
     '<div class="text-muted small text-center p-4">No hay campos que coincidan.</div>';
 
-  const pend = campos.filter(c => c.estado === 'pendiente').length;
+  const n = (e) => campos.filter(c => estadoDe(c) === e).length;
   document.getElementById('contadores').innerHTML =
-    `<span class="dot dot-sql me-1"></span>${campos.length - pend} SQL
-     <span class="dot dot-pendiente ms-3 me-1"></span>${pend} pendientes
+    `<span class="dot dot-sql me-1"></span>${n('sql')} ${validado ? 'funcionan' : 'SQL'}
+     ${validado ? `<span class="dot dot-error ms-3 me-1"></span>${n('error')} con error` : ''}
+     <span class="dot dot-pendiente ms-3 me-1"></span>${n('pendiente')} pendientes
      <span class="ms-3">· mostrando ${visibles.length}</span>`;
 }
 
@@ -379,9 +422,10 @@ function cargarPanel(c) {
   document.getElementById('panel').classList.remove('d-none');
   document.getElementById('pTipoBadge').textContent = esMet ? 'Métrica' : 'Dimensión';
   document.getElementById('pTitulo').textContent = c.id ? c.name : (esMet ? 'Nueva métrica' : 'Nueva dimensión');
-  document.getElementById('pEstado').innerHTML = !c.id ? '' : c.estado === 'sql'
-    ? '<span class="badge text-bg-success">SQL válido</span>'
-    : '<span class="badge text-bg-warning">Pendiente</span>';
+  const BADGE = { sql: ['success', validado ? 'Funciona' : 'SQL'], error: ['danger', 'Error en el DW'],
+                  pendiente: ['warning', 'Pendiente'] };
+  const [color, texto] = BADGE[estadoDe(c)];
+  document.getElementById('pEstado').innerHTML = c.id ? `<span class="badge text-bg-${color}">${texto}</span>` : '';
   document.getElementById('btnEliminar').classList.toggle('d-none', !c.id);
 
   document.getElementById('pNombre').value = c.name;
@@ -407,6 +451,7 @@ function cargarPanel(c) {
 
   document.getElementById('tMetricaWrap').classList.toggle('d-none', esMet);
   document.getElementById('resultado').innerHTML = '';
+  mostrarErrorPanel();
   setDirty(false);
   cargando = false;
   renderLista();
@@ -444,6 +489,7 @@ async function guardarCampo() {
   cargarPanel({ ...d.campo });
   history.replaceState(null, '', `#${clave(d.campo)}`);
   toast(`«${d.campo.name}» guardado.`);
+  validarTodo();
 }
 
 function descartar() {
@@ -641,6 +687,7 @@ async function guardarEntidad(i) {
   if (!d.ok) { toast(d.error, false); return; }
   entidades[i] = d.entidad;
   renderEntidades();
+  validarTodo();
   toast(`Entidad «${d.entidad.name}» guardada.`);
 }
 
@@ -664,5 +711,6 @@ renderEntidades();
 renderLista();
 const [k, id] = location.hash.slice(1).split('-');
 if (k && id) abrirCampo(k, Number(id));
+validarTodo();
 </script>
 {% endblock %}

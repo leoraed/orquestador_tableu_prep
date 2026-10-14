@@ -33,7 +33,7 @@ class ConsultaError(Exception):
 # Tableau formula patterns — these are NOT valid MySQL SQL
 _TABLEAU_PATTERNS = [
     r"\[Calculation_\d+\]",      # [Calculation_123456]
-    r"IF\s+.+THEN",              # IF ... THEN
+    r"\bIF\s+[\s\S]+?\bTHEN\b",  # IF ... THEN (también en varias líneas)
     r"\bIIF\s*\(",               # IIF(
     r"\bZN\s*\(",                # ZN(
     r"\bATTR\s*\(",              # ATTR(
@@ -46,6 +46,7 @@ _TABLEAU_PATTERNS = [
     r"\b(TODAY|DATETRUNC|DATEADD)\s*\(",
     r"\bELSEIF\b",
     r"\[[^\]\n']+\]",            # [campo] — MySQL no usa corchetes
+    r"__tableau_internal_object_id__",
 ]
 _TABLEAU_RE = re.compile("|".join(_TABLEAU_PATTERNS), re.IGNORECASE)
 
@@ -127,6 +128,23 @@ def _bound_date(valor: str, es_hasta: bool) -> str:
     return d.isoformat()
 
 
+def _from_sql(entity) -> str:
+    """FROM + JOINs de la entidad."""
+    sql = f"FROM `{entity.base_table}`\n"
+    for j in (entity.joins or []):
+        table = j.get("table", "")
+        alias = j.get("alias") or table
+        on = j.get("on", "")
+        jtype = j.get("type", "LEFT").upper()
+        if not table:
+            continue
+        if on:
+            sql += f"{jtype} JOIN `{table}` AS `{alias}` ON {_esc(on)}\n"
+        else:
+            sql += f"{jtype} JOIN `{table}` AS `{alias}`\n"
+    return sql
+
+
 def _build_sql(entity, dim_map, met_map, dimensiones, metricas, filtros, periodo, limite):
     params: list = []
 
@@ -137,22 +155,7 @@ def _build_sql(entity, dim_map, met_map, dimensiones, metricas, filtros, periodo
     for m in metricas:
         selects.append(f"  {_esc(met_map[m].expression)} AS `{_esc(m)}`")
     sql = "SELECT\n" + ",\n".join(selects) + "\n"
-
-    # FROM
-    sql += f"FROM `{entity.base_table}`\n"
-
-    # JOINs
-    for j in (entity.joins or []):
-        table = j.get("table", "")
-        alias = j.get("alias") or table
-        on = j.get("on", "")
-        jtype = j.get("type", "LEFT").upper()
-        if not table:
-            continue
-        if on:
-            sql += f"{jtype} JOIN `{table}` AS `{alias}` ON {on}\n"
-        else:
-            sql += f"{jtype} JOIN `{table}` AS `{alias}`\n"
+    sql += _from_sql(entity)
 
     # WHERE
     where = []
@@ -242,6 +245,11 @@ def consultar(
             raise ConsultaError(f"El modelo '{modelo}' no tiene entidades definidas.")
 
         entity = m.entities[0]
+        if not entity.base_table:
+            raise ConsultaError(
+                f"El modelo '{modelo}' no tiene tabla base. Definila en el editor "
+                f"de modelos (pestaña «Entidades y joins»)."
+            )
         dim_map = {d.name: d for d in entity.dimensions}
         met_map = {mt.name: mt for mt in entity.metrics}
         for nombre, o in ((overrides or {}).get("dimensiones") or {}).items():
@@ -352,3 +360,45 @@ def columnas_tabla(tablas: list[str]) -> dict[str, list[str]]:
     for r in rows:
         out.setdefault(r["TABLE_NAME"], []).append(r["COLUMN_NAME"])
     return out
+
+
+def validar_campos(modelo: str) -> dict[str, str | None]:
+    """
+    Compila cada dimensión y métrica del modelo contra el DW sin traer datos
+    (WHERE 1=0): MySQL valida columnas, joins y sintaxis igual, y responde en
+    milisegundos. Los campos en sintaxis Tableau no se ejecutan.
+
+    Devuelve {"dimension-<id>" | "metric-<id>": None si compila, o el error}.
+    """
+    db = SessionCatalog()
+    try:
+        m = db.query(SemanticModel).filter(SemanticModel.name == modelo).first()
+        if not m:
+            raise ConsultaError(f"Modelo '{modelo}' no encontrado.")
+        pendientes = []
+        for entity in m.entities:
+            campos = [("dimension", c) for c in entity.dimensions] + [("metric", c) for c in entity.metrics]
+            for kind, c in campos:
+                if not es_sintaxis_tableau(c.expression):
+                    pendientes.append((f"{kind}-{c.id}", c.expression,
+                                       _from_sql(entity) if entity.base_table else None))
+    finally:
+        db.close()
+
+    resultados: dict[str, str | None] = {}
+    conn = _conn()
+    try:
+        with conn.cursor() as cursor:
+            for clave, expr, from_sql in pendientes:
+                if not from_sql:
+                    resultados[clave] = "La entidad no tiene tabla base."
+                    continue
+                try:
+                    cursor.execute(f"SELECT {_esc(expr)} AS v\n{from_sql}WHERE 1=0", ())
+                    cursor.fetchall()
+                    resultados[clave] = None
+                except pymysql.MySQLError as e:
+                    resultados[clave] = e.args[1] if len(e.args) > 1 else str(e)
+    finally:
+        conn.close()
+    return resultados

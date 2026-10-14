@@ -272,7 +272,8 @@ def make_resolver(
     Arma un resolvedor de referencias para un datasource.
 
     defs:       {'[campo]': {'formula': ...}} — todas las columnas del datasource.
-    columns:    {'[campo]': (tabla, columna_remota)} — del <cols><map> del TWB.
+    columns:    {'[campo]': (tabla, columna_remota)} — del <cols><map> del TWB;
+                tabla None si la fuente es publicada (sqlproxy).
     base_table: tabla base; sus columnas se emiten sin prefijo de tabla.
     ds_names:   nombres internos de todos los datasources (para detectar blending).
     """
@@ -282,6 +283,11 @@ def make_resolver(
     def physical(key: str) -> str:
         if key in columns:
             table, remote = columns[key]
+            if table is None:
+                # Fuente publicada (sqlproxy): no hay tabla real; Tableau renombra las
+                # columnas repetidas como "col (tabla)" → `tabla`.`col`
+                m = _COL_DE_TABLA_RE.match(remote)
+                return f"`{m.group(2)}`.`{m.group(1)}`" if m else f"`{remote}`"
             return f"`{remote}`" if table == base_table else f"`{table}`.`{remote}`"
         return f"`{_split_ref(key)[0]}`"
 

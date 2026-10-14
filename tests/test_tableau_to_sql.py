@@ -184,3 +184,30 @@ def test_parse_twb_traduce_y_reporta_pendientes():
         {"name": "Ventas CM", "kind": "metric",
          "reason": "parámetro de Tableau ([Parameters].[Parameter 5])"},
     ]
+
+
+TWB_PUBLICADO = """<?xml version='1.0' encoding='utf-8' ?>
+<workbook><datasources>
+  <datasource name='sqlproxy.abc' caption='Modelo_Dashboard_Marketing'>
+    <connection class='sqlproxy'>
+      <relation type='table' name='sqlproxy' table='[sqlproxy]'/>
+      <cols>
+        <map key='[Source]' value='[sqlproxy].[Source]'/>
+        <map key='[Fecha (stagedata_general_calendario_marketing)]'
+             value='[sqlproxy].[Fecha (stagedata_general_calendario_marketing)]'/>
+      </cols>
+    </connection>
+    <column name='[Source]' role='dimension' datatype='string'/>
+    <column name='[Fecha (stagedata_general_calendario_marketing)]' caption='Fecha' role='dimension' datatype='date'/>
+  </datasource>
+</datasources></workbook>
+"""
+
+
+def test_fuente_publicada_no_inventa_tabla_y_resuelve_columnas_renombradas():
+    [ds] = parse_twb(TWB_PUBLICADO.encode("utf-8"))
+    assert ds.base_table == ""
+    assert ds.avisos and "Fuente publicada" in ds.avisos[0]
+    dims = {d["name"]: d["expression"] for d in ds.dimensions}
+    assert dims["Source"] == "`Source`"
+    assert dims["Fecha"] == "`stagedata_general_calendario_marketing`.`Fecha`"

@@ -17,6 +17,12 @@ class TwbDatasource:
     metrics: list[dict] = field(default_factory=list)
     # Campos que quedaron con la fórmula Tableau original: {name, kind, reason}
     pendientes: list[dict] = field(default_factory=list)
+    # Problemas del datasource completo (ej. fuente publicada sin tabla real)
+    avisos: list[str] = field(default_factory=list)
+
+
+# Conexión a una fuente publicada en Tableau Server: no es una tabla del DW
+_TABLAS_PROXY = {"sqlproxy"}
 
 
 def _clean(name: str) -> str:
@@ -59,6 +65,7 @@ def parse_twb(content: bytes) -> list[TwbDatasource]:
     col_table: dict[str, dict] = {}     # ds_name -> {col_name: (table, remote_col)}
     ds_tables: dict[str, list] = {}     # ds_name -> [table_names]
     ds_captions: dict[str, str] = {}    # ds_name -> human caption
+    ds_proxy: set[str] = set()          # datasources que son fuentes publicadas
 
     for ds in ds_container:
         ds_name = ds.get("name", "")
@@ -75,7 +82,9 @@ def parse_twb(content: bytes) -> list[TwbDatasource]:
         if conn is not None:
             for rel in conn.findall('.//relation[@type="table"]'):
                 t = rel.get("table", "").strip("[]")
-                if t and t not in ds_tables[ds_name]:
+                if t.lower() in _TABLAS_PROXY:
+                    ds_proxy.add(ds_name)
+                elif t and t not in ds_tables[ds_name]:
                     ds_tables[ds_name].append(t)
 
             cols_el = conn.find("cols")
@@ -85,7 +94,9 @@ def parse_twb(content: bytes) -> list[TwbDatasource]:
                     val = m.get("value", "")
                     if "].[" in val:
                         table, remote = val.split("].[", 1)
-                        col_table[ds_name][key] = (table.strip("[]"), remote.strip("[]"))
+                        table = table.strip("[]")
+                        col_table[ds_name][key] = (
+                            None if table.lower() in _TABLAS_PROXY else table, remote.strip("[]"))
 
         for col in ds.findall("column"):
             name = col.get("name", "")
@@ -190,6 +201,13 @@ def parse_twb(content: bytes) -> list[TwbDatasource]:
         dimensions.sort(key=lambda x: x["name"])
         metrics.sort(key=lambda x: x["name"])
 
+        avisos = []
+        if ds_name in ds_proxy and not tables:
+            avisos.append(
+                "Fuente publicada en Tableau Server: el .twb no indica qué tablas del DW usa. "
+                "Definí la tabla base y los joins en el editor del modelo."
+            )
+
         results.append(TwbDatasource(
             model_name=_safe_name(caption),
             caption=caption,
@@ -199,6 +217,7 @@ def parse_twb(content: bytes) -> list[TwbDatasource]:
             dimensions=dimensions,
             metrics=metrics,
             pendientes=sorted(pendientes, key=lambda x: x["name"]),
+            avisos=avisos,
         ))
 
     return results

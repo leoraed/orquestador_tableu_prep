@@ -53,7 +53,9 @@ def client():
             s.close()
 
     api.app.dependency_overrides[get_catalog_db] = override
-    yield TestClient(api.app)
+    c = TestClient(api.app)
+    c.Session = Session
+    yield c
     api.app.dependency_overrides.clear()
 
 
@@ -153,3 +155,61 @@ def test_entidad_se_edita_sin_tocar_campos(client):
 def test_pagina_editor_renderiza(client):
     html = client.get("/modelos/mkt").text
     assert "Expresión SQL" in html and '"campos"' in html
+
+
+def test_detector_tableau_multilinea_y_objetos_internos():
+    from src.catalog.sql_compiler import es_sintaxis_tableau
+    assert es_sintaxis_tableau("IF x = 1\r\n    THEN 'a'\r\nEND")
+    assert es_sintaxis_tableau("`__tableau_internal_object_id__`.`stagedata_link_66EB`")
+    assert not es_sintaxis_tableau("CASE WHEN Source = 'Ventas' THEN id_direccion END")
+    assert not es_sintaxis_tableau("IFNULL(Provincia, 'Sin dato')")
+
+
+def test_validar_compila_cada_campo_sin_traer_datos(client, monkeypatch):
+    import pymysql
+    import src.catalog.sql_compiler as sc
+
+    ejecutadas = []
+
+    class Cursor:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def execute(self, sql, args):
+            ejecutadas.append(sql)
+            assert sql.rstrip().endswith("WHERE 1=0")
+            if "Source" not in sql and "Fecha" not in sql:
+                raise pymysql.err.OperationalError(1054, "Unknown column 'id_direccion' in 'field list'")
+        def fetchall(self): return []
+
+    class Conn:
+        def cursor(self): return Cursor()
+        def close(self): pass
+
+    ent = client.get(f"{MOD}/campos").json()["campos"][0]["entity_id"]
+    client.post(f"{MOD}/campos", json={"kind": "metric", "entity_id": ent, "name": "Direcciones",
+                                      "expression": "COUNT(DISTINCT id_direccion)"})
+    monkeypatch.setattr(sc, "SessionCatalog", client.Session)
+    monkeypatch.setattr(sc, "_conn", lambda: Conn())
+    r = client.post(f"{MOD}/validar").json()
+    assert r["ok"]
+    campos = {c["name"]: c for c in client.get(f"{MOD}/campos").json()["campos"]}
+    res = r["resultados"]
+    assert res[f"dimension-{campos['Fecha']['id']}"] is None
+    assert res[f"metric-{campos['Ventas']['id']}"] is None          # usa Source
+    assert res[f"metric-{campos['Direcciones']['id']}"] == "Unknown column 'id_direccion' in 'field list'"
+    # Los campos en sintaxis Tableau no se ejecutan
+    assert f"metric-{campos['Mudanzas']['id']}" not in res
+    assert f"dimension-{campos['cond_OrbithHome']['id']}" not in res
+    assert len(ejecutadas) == len(res) == 4
+
+
+def test_consultar_sin_tabla_base_da_error_claro(client, monkeypatch):
+    import src.catalog.sql_compiler as sc
+    ent = client.get(f"{MOD}/campos").json()["campos"][0]["entity_id"]
+    client.put(f"{MOD}/entidades/{ent}", json={"name": "Link", "base_table": "x", "joins": []})
+    s = client.Session()
+    s.query(sc.SemanticModel).first().entities[0].base_table = ""
+    s.commit(); s.close()
+    monkeypatch.setattr(sc, "SessionCatalog", client.Session)
+    with pytest.raises(sc.ConsultaError, match="no tiene tabla base"):
+        sc.consultar("mkt", ["Ventas"], [])

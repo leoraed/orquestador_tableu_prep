@@ -182,8 +182,18 @@ async function importarTwb() {
         html += `<br><b>Ya existían (omitidos):</b> ${data.skipped.join(', ')}`;
       }
       html += `</div>`;
+      // Avisos y campos sin convertir: se muestran y no se recarga, para que se lean
+      const conAvisos = data.created.filter(m => (data.avisos || {})[m] || (data.pendientes || {})[m]);
+      for (const m of conAvisos) {
+        const avisos = (data.avisos || {})[m] || [];
+        const pend = ((data.pendientes || {})[m] || []).length;
+        html += `<div class="alert alert-warning mt-2 mb-0 py-2 small"><b>${m}</b>
+          ${avisos.map(a => `<div><i class="bi bi-exclamation-triangle me-1"></i>${a}</div>`).join('')}
+          ${pend ? `<div>${pend} campos quedaron en sintaxis Tableau (filtrá por «Pendientes» en el editor).</div>` : ''}
+          <a href="/modelos/${encodeURIComponent(m)}" class="alert-link">Abrir en el editor →</a></div>`;
+      }
       resultDiv.innerHTML = html;
-      setTimeout(() => location.reload(), 1800);
+      if (!conAvisos.length) setTimeout(() => location.reload(), 1800);
     } else {
       resultDiv.innerHTML = `<div class="alert alert-danger mb-0 py-2 small">${data.error || 'Error desconocido'}</div>`;
     }

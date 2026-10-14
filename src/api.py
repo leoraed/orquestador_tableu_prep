@@ -1139,7 +1139,7 @@ def api_eliminar_modelo(nombre: str, db: Session = Depends(get_catalog_db)):
 
 from fastapi.encoders import jsonable_encoder
 from src.catalog.sql_compiler import (
-    consultar as _consultar_dw, ConsultaError, es_sintaxis_tableau, columnas_tabla,
+    consultar as _consultar_dw, ConsultaError, es_sintaxis_tableau, columnas_tabla, validar_campos,
 )
 from src.catalog.tableau_to_sql import NoTraducible, make_field_resolver, translate_formula
 
@@ -1355,6 +1355,22 @@ def api_columnas_modelo(nombre: str, db: Session = Depends(get_catalog_db)):
         return JSONResponse({"ok": False, "error": str(e)})
 
 
+@app.post("/api/modelos/{nombre}/validar")
+def api_validar_modelo(nombre: str, db: Session = Depends(get_catalog_db)):
+    """Compila todos los campos contra el DW (sin traer datos) y devuelve los errores."""
+    _modelo_o_404(db, nombre)
+    t0 = _dt.utcnow()
+    try:
+        resultados = validar_campos(nombre)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)})
+    return JSONResponse({
+        "ok": True,
+        "resultados": resultados,
+        "tiempo_ms": int((_dt.utcnow() - t0).total_seconds() * 1000),
+    })
+
+
 @app.put("/api/modelos/{nombre}")
 async def api_editar_cabecera_modelo(nombre: str, request: Request, db: Session = Depends(get_catalog_db)):
     data = await request.json()
@@ -1463,6 +1479,7 @@ async def api_importar_twb(file: UploadFile = File(...), db: Session = Depends(g
     created: list[str] = []
     skipped: list[str] = []
     pendientes: dict[str, list[dict]] = {}
+    avisos: dict[str, list[str]] = {}
 
     for ds in datasources:
         if db.query(SemanticModel).filter(SemanticModel.name == ds.model_name).first():
@@ -1512,8 +1529,10 @@ async def api_importar_twb(file: UploadFile = File(...), db: Session = Depends(g
         created.append(ds.model_name)
         if ds.pendientes:
             pendientes[ds.model_name] = ds.pendientes
+        if ds.avisos:
+            avisos[ds.model_name] = ds.avisos
 
     return JSONResponse({
         "ok": bool(created), "created": created, "skipped": skipped,
-        "pendientes": pendientes,
+        "pendientes": pendientes, "avisos": avisos,
     })
