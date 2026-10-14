@@ -109,8 +109,7 @@ def dashboard(request: Request, msg: str = None, db: Session = Depends(get_db)):
         EjecucionFlow.inicio >= inicio_hoy,
         EjecucionFlow.estado == "exitoso",
     ).count()
-    return templates.TemplateResponse("dashboard.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "dashboard.html", {
         "flows": flows,
         "pipelines": pipelines,
         "ejecuciones": ejecuciones,
@@ -130,8 +129,7 @@ def pagina_flows(request: Request, msg: str = None):
     descubiertos = descubrir_tfl(carpetas)
     paths_registrados = {f["file"] for f in flows}
     todos_nombres = [f["name"] for f in flows]
-    return templates.TemplateResponse("flows.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "flows.html", {
         "flows": flows,
         "pipelines": pipelines,
         "carpetas": carpetas,
@@ -184,8 +182,7 @@ def pagina_grafo(request: Request, pipeline: str = None, db: Session = Depends(g
         if info:
             ultimos_estados[item["name"]] = info
 
-    return templates.TemplateResponse("grafo.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "grafo.html", {
         "flows": flows_en_grafo,
         "tasks": tasks_en_grafo,
         "deps_en_pipeline": deps_en_pipeline,
@@ -222,8 +219,7 @@ def pagina_pipelines(request: Request, msg: str = None):
     tasks = load_tasks()
     pipelines = load_pipelines()
     jobs = _jobs_map()
-    return templates.TemplateResponse("pipelines.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "pipelines.html", {
         "flows": flows,
         "tasks": tasks,
         "pipelines": pipelines,
@@ -235,8 +231,7 @@ def pagina_pipelines(request: Request, msg: str = None):
 
 @app.get("/tasks")
 def pagina_tasks(request: Request, msg: str = None):
-    return templates.TemplateResponse("tasks.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "tasks.html", {
         "tasks": load_tasks(),
         "mensaje": msg,
         "active": "tasks",
@@ -245,8 +240,7 @@ def pagina_tasks(request: Request, msg: str = None):
 
 @app.get("/configuracion")
 def pagina_configuracion(request: Request, msg: str = None):
-    return templates.TemplateResponse("configuracion.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "configuracion.html", {
         "settings": load_settings(),
         "mensaje": msg,
         "active": "config",
@@ -261,8 +255,7 @@ def pagina_logs(request: Request, lineas: int = 200):
         with open(log_path, encoding="utf-8", errors="replace") as f:
             contenido = f.readlines()
         contenido = contenido[-lineas:]
-    return templates.TemplateResponse("logs.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "logs.html", {
         "lineas": contenido,
         "lineas_n": lineas,
         "active": "logs",
@@ -274,8 +267,7 @@ def pagina_historial(request: Request, flow: str = None, db: Session = Depends(g
     q = db.query(EjecucionFlow).order_by(EjecucionFlow.inicio.desc())
     if flow:
         q = q.filter(EjecucionFlow.nombre_flow == flow)
-    return templates.TemplateResponse("historial.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "historial.html", {
         "ejecuciones": q.limit(200).all(),
         "flows": load_flows(),
         "filtro_flow": flow or "",
@@ -727,8 +719,7 @@ def pagina_catalogo(request: Request, db: Session = Depends(get_catalog_db)):
             "source_types": source_types,
         })
 
-    return templates.TemplateResponse("catalogo.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "catalogo.html", {
         "flows": flows_data,
         "total_sources": total_sources,
         "total_fields": total_fields,
@@ -761,8 +752,7 @@ def pagina_catalogo_flow(flow_name: str, request: Request, db: Session = Depends
         "transforms": flow.transforms,
     }
 
-    return templates.TemplateResponse("catalogo_flow.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "catalogo_flow.html", {
         "flow": flow_data,
         "graph_data": flow.graph_data or {"nodes": [], "edges": []},
         "active": "catalogo",
@@ -968,8 +958,7 @@ def pagina_modelos(request: Request, db: Session = Depends(get_catalog_db)):
             "total_dims": sum(len(e.dimensions) for e in m.entities),
             "total_metrics": sum(len(e.metrics) for e in m.entities),
         })
-    return templates.TemplateResponse("modelos.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "modelos.html", {
         "modelos": modelos_data,
         "total_entidades": total_entidades,
         "total_metricas": total_metricas,
@@ -986,8 +975,7 @@ def pagina_modelo_editor(nombre: str, request: Request, db: Session = Depends(ge
     tablas = [r[0] for r in db.query(CatalogOutput.destination_table)
               .filter(CatalogOutput.destination_table.isnot(None))
               .distinct().order_by(CatalogOutput.destination_table).all()]
-    return templates.TemplateResponse("modelos_editor.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "modelos_editor.html", {
         "modelo": modelo,
         "tablas_catalogo": tablas,
         "estado_inicial": _modelo_to_dict(modelo),
