@@ -701,59 +701,152 @@ from src.catalog.models import CatalogFlow, CatalogSource, CatalogField, Catalog
 from src.catalog.service import parse_todas_las_carpetas, parse_and_save as catalog_parse_file
 
 
+from sqlalchemy import func as _func, or_ as _or
+from sqlalchemy.orm import selectinload as _selectinload
+from src.catalog.lineage import CAPAS, capa as _capa, construir_indice
+
+
+def _linaje_catalogo(db: Session):
+    """Flows con fuentes/outputs cargados + índice de qué flow escribe/lee cada tabla."""
+    flows = (db.query(CatalogFlow)
+             .options(_selectinload(CatalogFlow.sources), _selectinload(CatalogFlow.outputs))
+             .order_by(CatalogFlow.flow_name).all())
+    indice, fuentes, escritas = construir_indice(flows)
+    # Modelos semánticos que usan cada tabla como base
+    modelos_por_tabla: dict[str, list[str]] = {}
+    for m_name, tabla in (db.query(SemanticModel.name, SemanticEntity.base_table)
+                          .join(SemanticEntity, SemanticEntity.model_id == SemanticModel.id).all()):
+        if tabla:
+            modelos_por_tabla.setdefault(tabla.lower(), []).append(m_name)
+    return flows, indice, fuentes, escritas, modelos_por_tabla
+
+
+def _fmt_fecha(d) -> str:
+    return d.strftime("%d/%m/%Y %H:%M") if d else "—"
+
+
 @app.get("/catalogo")
 def pagina_catalogo(request: Request, db: Session = Depends(get_catalog_db)):
-    flows = db.query(CatalogFlow).order_by(CatalogFlow.flow_name).all()
-    total_sources = sum(len(f.sources) for f in flows)
-    total_fields = db.query(CatalogField).count()
+    flows, indice, fuentes, escritas, modelos = _linaje_catalogo(db)
+    campos_por_flow = dict(db.query(CatalogField.flow_id, _func.count(CatalogField.id))
+                           .group_by(CatalogField.flow_id).all())
+    total_campos = sum(campos_por_flow.values())
+    documentados = (db.query(_func.count(CatalogField.id))
+                    .filter(CatalogField.description.isnot(None), CatalogField.description != "")
+                    .scalar())
 
-    flows_data = []
-    for f in flows:
-        source_types = list({s.source_type for s in f.sources if s.source_type})
-        flows_data.append({
-            "flow_name": f.flow_name,
-            "parsed_at": f.parsed_at,
-            "sources": f.sources,
-            "outputs": f.outputs,
-            "total_fields": sum(len(s.fields) for s in f.sources),
-            "source_types": source_types,
-        })
+    flows_data = [{
+        "name": f.flow_name,
+        "capa": _capa(f.flow_name),
+        "parsed_at": _fmt_fecha(f.parsed_at),
+        "tipos": sorted({s.source_type for s in f.sources if s.source_type}),
+        "campos": campos_por_flow.get(f.id, 0),
+        "lee": [r.etiqueta for r in fuentes[f.flow_name]],
+        "escribe": escritas[f.flow_name],
+    } for f in flows]
+
+    tablas = sorted(set(indice.escriben) | set(indice.leen))
+    tablas_data = [{
+        "tabla": t,
+        "escriben": indice.escriben.get(t, []),
+        "leen": indice.leen.get(t, []),
+        "modelos": modelos.get(t, []),
+    } for t in tablas]
 
     return templates.TemplateResponse(request, "catalogo.html", {
-        "flows": flows_data,
-        "total_sources": total_sources,
-        "total_fields": total_fields,
+        "datos": {
+            "capas": CAPAS,
+            "flows": flows_data,
+            "tablas": tablas_data,
+            "stats": {"flows": len(flows), "tablas": len(tablas),
+                      "campos": total_campos, "documentados": documentados},
+        },
         "active": "catalogo",
     })
+
+
+@app.get("/api/catalog/buscar-campos")
+def api_catalog_buscar_campos(q: str = "", tipo: str = "", limite: int = 200,
+                              db: Session = Depends(get_catalog_db)):
+    """Busca campos por nombre o descripción, con su fuente y flow en una sola consulta."""
+    q = q.strip()
+    if len(q) < 2:
+        return {"campos": [], "total": 0}
+    patron = f"%{q}%"
+    query = (db.query(CatalogField, CatalogSource, CatalogFlow.flow_name)
+             .join(CatalogSource, CatalogField.source_id == CatalogSource.id)
+             .join(CatalogFlow, CatalogField.flow_id == CatalogFlow.id)
+             .filter(_or(CatalogField.field_name.ilike(patron),
+                         CatalogField.description.ilike(patron))))
+    if tipo:
+        query = query.filter(CatalogSource.source_type == tipo)
+    total = query.count()
+    filas = query.order_by(CatalogField.field_name, CatalogFlow.flow_name).limit(min(limite, 500)).all()
+    return {
+        "total": total,
+        "campos": [{
+            "id": f.id,
+            "name": f.field_name,
+            "type": f.field_type,
+            "description": f.description,
+            "flow": flow_name,
+            "fuente": s.source_table or s.node_name,
+            "source_type": s.source_type,
+        } for f, s, flow_name in filas],
+    }
 
 
 @app.get("/catalogo/{flow_name}")
 def pagina_catalogo_flow(flow_name: str, request: Request, db: Session = Depends(get_catalog_db)):
     from fastapi import HTTPException
-    flow = db.query(CatalogFlow).filter(CatalogFlow.flow_name == flow_name).first()
+    flows, indice, fuentes, escritas, modelos = _linaje_catalogo(db)
+    flow = next((f for f in flows if f.flow_name == flow_name), None)
     if not flow:
         raise HTTPException(status_code=404, detail="Flow no encontrado en el catálogo.")
 
-    flow_data = {
-        "flow_name": flow.flow_name,
-        "parsed_at": flow.parsed_at,
-        "sources": [
-            {
-                "node_name": s.node_name,
-                "source_type": s.source_type,
-                "source_table": s.source_table,
-                "file_path": s.file_path,
-                "database_name": s.database_name,
-                "fields": sorted(s.fields, key=lambda f: f.ordinal),
-            }
-            for s in flow.sources
-        ],
-        "outputs": flow.outputs,
-        "transforms": flow.transforms,
-    }
+    otros = lambda lista: [x for x in lista if x != flow_name]
+    lee = [{
+        "etiqueta": r.etiqueta,
+        "tabla": r.tabla,
+        "inferida": r.inferida,
+        "productores": otros(indice.escriben.get(r.tabla, [])) if r.tabla else [],
+    } for r in fuentes[flow_name]]
+    escribe = [{
+        "tabla": t,
+        "lectores": otros(indice.leen.get(t, [])),
+        "modelos": modelos.get(t, []),
+    } for t in escritas[flow_name]]
+
+    campos = (db.query(CatalogField).filter(CatalogField.flow_id == flow.id)
+              .order_by(CatalogField.source_id, CatalogField.ordinal).all())
+    por_fuente: dict[int, list] = {}
+    for c in campos:
+        por_fuente.setdefault(c.source_id, []).append({
+            "id": c.id, "name": c.field_name, "type": c.field_type, "ordinal": c.ordinal,
+            "description": c.description or "", "tags": c.tags or "",
+        })
+    sources = [{
+        "id": s.id,
+        "node_name": s.node_name,
+        "tabla": s.source_table or (s.file_path or "").replace("\\", "/").split("/")[-1] or None,
+        "source_type": s.source_type,
+        "database": s.database_name,
+        "fields": por_fuente.get(s.id, []),
+    } for s in sorted(flow.sources, key=lambda s: s.node_name.lower())]
+
+    transforms = (db.query(CatalogTransformation)
+                  .filter(CatalogTransformation.flow_id == flow.id).all())
 
     return templates.TemplateResponse(request, "catalogo_flow.html", {
-        "flow": flow_data,
+        "flow": {"flow_name": flow.flow_name, "capa": _capa(flow.flow_name),
+                 "parsed_at": _fmt_fecha(flow.parsed_at), "file_path": flow.file_path},
+        "datos": {
+            "lee": lee,
+            "escribe": escribe,
+            "sources": sources,
+            "transforms": [{"name": t.node_name, "type": t.transform_type, "details": t.details}
+                           for t in transforms],
+        },
         "graph_data": flow.graph_data or {"nodes": [], "edges": []},
         "active": "catalogo",
     })

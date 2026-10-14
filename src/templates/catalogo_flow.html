@@ -1,122 +1,203 @@
 {% extends "base.html" %}
+
+{% block head %}
+<style>
+  .lin-item { border-bottom: 1px solid #eef0f4; padding: .45rem .75rem; }
+  .lin-item:last-child { border-bottom: 0; }
+  .fuente-item { cursor: pointer; border-left: 3px solid transparent; }
+  .fuente-item:hover { background: #f1f4fa; }
+  .fuente-item.activo { background: #e7eefc; border-left-color: var(--bs-primary); }
+  .fuentes-lista { max-height: calc(100vh - 300px); overflow-y: auto; }
+  .campos-tabla { max-height: calc(100vh - 340px); overflow-y: auto; }
+  .campos-tabla thead th { position: sticky; top: 0; background: #fff; z-index: 1; }
+  .editable { cursor: text; min-height: 1.4rem; border-radius: 4px; padding: 0 .25rem; }
+  .editable:hover { background: #f1f4fa; outline: 1px dashed #ccd3e0; }
+  #grafoLinaje { height: calc(100vh - 300px); min-height: 420px; }
+  .panel-nodo { max-height: calc(100vh - 300px); overflow-y: auto; }
+  .flecha { color: #adb5bd; }
+</style>
+{% endblock %}
+
 {% block content %}
 
-<!-- Breadcrumb -->
-<nav aria-label="breadcrumb" class="mb-3">
+<nav aria-label="breadcrumb" class="mb-2">
   <ol class="breadcrumb">
     <li class="breadcrumb-item"><a href="/catalogo" class="text-decoration-none">Catálogo</a></li>
+    <li class="breadcrumb-item text-muted">{{ flow.capa }}</li>
     <li class="breadcrumb-item active">{{ flow.flow_name }}</li>
   </ol>
 </nav>
 
-<div class="d-flex justify-content-between align-items-start mb-4">
-  <div>
-    <h5 class="fw-bold mb-0">{{ flow.flow_name }}</h5>
-    <small class="text-muted">Parseado el {{ flow.parsed_at.strftime('%d/%m/%Y %H:%M') if flow.parsed_at else '—' }}</small>
-  </div>
+<div class="mb-3">
+  <h5 class="fw-bold mb-0">{{ flow.flow_name }}</h5>
+  <small class="text-muted">Parseado el {{ flow.parsed_at }} · <span class="font-monospace">{{ flow.file_path }}</span></small>
 </div>
 
-<!-- Grafo de linaje -->
-<div class="card mb-4">
-  <div class="card-header py-2 d-flex justify-content-between align-items-center">
-    <span><i class="bi bi-diagram-3 me-2 text-primary"></i>Linaje del flow</span>
-    <div class="d-flex gap-3 align-items-center small text-muted">
-      <span><span class="d-inline-block rounded me-1" style="width:12px;height:12px;background:#4fc3f7"></span>Fuente</span>
-      <span><span class="d-inline-block rounded me-1" style="width:12px;height:12px;background:#198754"></span>Output</span>
-      <span><span class="d-inline-block rounded me-1" style="width:12px;height:12px;background:#fd7e14"></span>Join</span>
-      <span><span class="d-inline-block rounded me-1" style="width:12px;height:12px;background:#ffc107"></span>Agregación</span>
-      <span><span class="d-inline-block rounded me-1" style="width:12px;height:12px;background:#6c757d"></span>Limpieza</span>
-      <span><span class="d-inline-block rounded me-1" style="width:12px;height:12px;background:#0dcaf0"></span>Unión</span>
-      <button class="btn btn-sm btn-outline-secondary py-0 ms-2" onclick="reordenarGrafo()">
-        <i class="bi bi-arrow-repeat"></i>
-      </button>
-    </div>
-  </div>
-  <div class="card-body p-0">
-    <div id="grafoLinaje" style="height:480px;border-radius:0;"></div>
-  </div>
-  <!-- Panel detalle del nodo -->
-  <div id="panelNodo" class="d-none" style="border-top:1px solid #eef0f4;padding:1rem 1.25rem;background:#fafbfc;border-radius:0 0 10px 10px">
-    <div class="d-flex justify-content-between align-items-start mb-2">
-      <div>
-        <span id="panelNodoTipo" class="badge me-2"></span>
-        <strong id="panelNodoNombre"></strong>
+<ul class="nav nav-tabs mb-3" id="tabs">
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#resumen" data-tab="resumen">
+    <i class="bi bi-arrow-left-right me-1"></i>Resumen</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#linaje" data-tab="linaje">
+    <i class="bi bi-diagram-3 me-1"></i>Linaje</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#campos" data-tab="campos">
+    <i class="bi bi-list-columns me-1"></i>Campos <span class="badge text-bg-light border" id="nCampos"></span></button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#transformaciones" data-tab="transformaciones">
+    <i class="bi bi-gear me-1"></i>Transformaciones <span class="badge text-bg-light border" id="nTransf"></span></button></li>
+</ul>
+
+<div class="tab-content">
+  <!-- ═══ Resumen ═══ -->
+  <div class="tab-pane fade" id="resumen">
+    <div class="row g-3">
+      <div class="col-lg-6">
+        <div class="card"><div class="card-header py-2"><i class="bi bi-box-arrow-in-right me-2 text-primary"></i>Lee
+          <span class="badge text-bg-light border" id="nLee"></span></div>
+          <div id="lee"></div></div>
       </div>
-      <button class="btn btn-sm btn-outline-secondary py-0" onclick="document.getElementById('panelNodo').classList.add('d-none')">
-        <i class="bi bi-x"></i>
-      </button>
+      <div class="col-lg-6">
+        <div class="card"><div class="card-header py-2"><i class="bi bi-box-arrow-right me-2 text-success"></i>Escribe
+          <span class="badge text-bg-light border" id="nEscribe"></span></div>
+          <div id="escribe"></div></div>
+      </div>
     </div>
-    <div id="panelNodoContenido"></div>
+  </div>
+
+  <!-- ═══ Linaje ═══ -->
+  <div class="tab-pane fade" id="linaje">
+    <div class="row g-3">
+      <div class="col-lg-9">
+        <div class="card">
+          <div class="card-header py-2 d-flex flex-wrap gap-3 align-items-center small text-muted">
+            <span><span class="d-inline-block rounded me-1" style="width:12px;height:12px;background:#4fc3f7"></span>Fuente</span>
+            <span><span class="d-inline-block rounded me-1" style="width:12px;height:12px;background:#198754"></span>Output</span>
+            <span><span class="d-inline-block rounded me-1" style="width:12px;height:12px;background:#fd7e14"></span>Join</span>
+            <span><span class="d-inline-block rounded me-1" style="width:12px;height:12px;background:#ffc107"></span>Agregación</span>
+            <span><span class="d-inline-block rounded me-1" style="width:12px;height:12px;background:#6c757d"></span>Limpieza</span>
+            <span><span class="d-inline-block rounded me-1" style="width:12px;height:12px;background:#0dcaf0"></span>Unión</span>
+            <div class="ms-auto d-flex gap-1">
+              <input id="buscarNodo" class="form-control form-control-sm" style="width:180px" placeholder="Buscar nodo…" list="nodosLista">
+              <datalist id="nodosLista"></datalist>
+              <button class="btn btn-sm btn-outline-secondary py-0" onclick="network.fit({animation:{duration:300}})" title="Ajustar a la pantalla">
+                <i class="bi bi-arrows-fullscreen"></i></button>
+              <button class="btn btn-sm btn-outline-secondary py-0" onclick="reordenarGrafo()" title="Reordenar">
+                <i class="bi bi-arrow-repeat"></i></button>
+            </div>
+          </div>
+          <div id="grafoLinaje"></div>
+        </div>
+      </div>
+      <div class="col-lg-3">
+        <div class="card panel-nodo">
+          <div class="card-body small" id="panelNodo">
+            <div class="text-muted text-center py-4"><i class="bi bi-hand-index fs-3 d-block mb-2"></i>
+              Hacé clic en un nodo para ver su detalle.<br>Rueda del mouse: zoom.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ Campos ═══ -->
+  <div class="tab-pane fade" id="campos">
+    <div class="row g-3">
+      <div class="col-lg-3">
+        <div class="card">
+          <div class="card-header py-2 small fw-semibold">Fuentes</div>
+          <div class="fuentes-lista" id="fuentes"></div>
+        </div>
+      </div>
+      <div class="col-lg-9">
+        <div class="card">
+          <div class="card-header py-2 d-flex align-items-center gap-2">
+            <strong id="fuenteTitulo"></strong>
+            <span class="small text-muted font-monospace" id="fuenteTabla"></span>
+            <div class="input-group input-group-sm ms-auto" style="max-width:260px">
+              <span class="input-group-text"><i class="bi bi-search"></i></span>
+              <input id="filtroCampos" class="form-control" placeholder="Filtrar campos">
+            </div>
+          </div>
+          <div class="campos-tabla">
+            <table class="table table-sm table-hover mb-0">
+              <thead><tr class="small text-muted"><th style="width:40px">#</th><th style="width:28%">Campo</th>
+                <th style="width:90px">Tipo</th><th>Descripción</th><th style="width:20%">Tags</th></tr></thead>
+              <tbody id="tbodyCampos"></tbody>
+            </table>
+          </div>
+          <div class="card-footer small text-muted py-1">Hacé clic en una descripción o en los tags para editarlos · Enter guarda · Esc cancela</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ Transformaciones ═══ -->
+  <div class="tab-pane fade" id="transformaciones">
+    <div class="d-flex gap-2 mb-2" id="filtrosTransf"></div>
+    <div id="listaTransf"></div>
   </div>
 </div>
 
-<!-- Campos por fuente -->
-{% for s in flow.sources %}
-<div class="card mb-3">
-  <div class="card-header py-2 d-flex justify-content-between align-items-center">
-    <span>
-      <i class="bi bi-table me-2 text-secondary"></i>
-      <strong>{{ s.node_name }}</strong>
-      <span class="text-muted small ms-2">{{ s.source_table or s.file_path or '' }}</span>
-      {% if s.source_type == 'mysql' %}
-        <span class="badge ms-1" style="background:#f89820;font-size:.65rem">MySQL</span>
-      {% elif s.source_type == 'excel' %}
-        <span class="badge bg-success ms-1" style="font-size:.65rem">Excel</span>
-      {% elif s.source_type == 'googledrive' %}
-        <span class="badge ms-1" style="background:#4285f4;font-size:.65rem">Drive</span>
-      {% else %}
-        <span class="badge bg-secondary ms-1" style="font-size:.65rem">{{ s.source_type }}</span>
-      {% endif %}
-      <span class="badge bg-secondary ms-1">{{ s.fields | length }} campos</span>
-    </span>
-  </div>
-  <div class="card-body p-0">
-    <table class="table table-sm table-hover mb-0">
-      <thead>
-        <tr>
-          <th>#</th><th>Campo</th><th>Tipo</th><th>Descripción</th><th>Tags</th><th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for f in s.fields | sort(attribute='ordinal') %}
-        <tr>
-          <td class="text-muted small">{{ f.ordinal }}</td>
-          <td class="font-monospace fw-semibold small">{{ f.field_name }}</td>
-          <td><span class="badge bg-light text-dark border small">{{ f.field_type }}</span></td>
-          <td>
-            <span class="desc-text-{{ f.id }} text-muted small">{{ f.description or '—' }}</span>
-            <input class="form-control form-control-sm desc-input-{{ f.id }} d-none"
-              value="{{ f.description or '' }}" style="min-width:200px" placeholder="Descripción...">
-          </td>
-          <td>
-            <span class="tags-text-{{ f.id }} text-muted small">{{ f.tags or '—' }}</span>
-            <input class="form-control form-control-sm tags-input-{{ f.id }} d-none"
-              value="{{ f.tags or '' }}" placeholder="tag1, tag2...">
-          </td>
-          <td>
-            <button class="btn btn-sm btn-outline-secondary py-0 btn-edit-{{ f.id }}"
-              onclick="editarCampo({{ f.id }})"><i class="bi bi-pencil"></i></button>
-            <button class="btn btn-sm btn-success py-0 btn-save-{{ f.id }} d-none"
-              onclick="guardarCampo({{ f.id }})"><i class="bi bi-check-lg"></i></button>
-            <button class="btn btn-sm btn-outline-secondary py-0 btn-cancel-{{ f.id }} d-none"
-              onclick="cancelarEdicion({{ f.id }})"><i class="bi bi-x-lg"></i></button>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+<div class="position-fixed bottom-0 end-0 p-3" style="z-index:9999">
+  <div id="toast" class="toast align-items-center border-0" role="alert">
+    <div class="d-flex"><div class="toast-body" id="toastMsg"></div>
+      <button type="button" class="btn-close me-2 m-auto" data-bs-dismiss="toast"></button></div>
   </div>
 </div>
-{% endfor %}
 
 {% endblock %}
 
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
 <script>
-// ── Datos del grafo ────────────────────────────────────────────────────────
+const D = {{ datos | tojson }};
 const rawGraph = {{ graph_data | tojson }};
+const FLOW = {{ flow.flow_name | tojson }};
 
+const esc = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const flowLink = (n) => `<a href="/catalogo/${encodeURIComponent(n)}" class="text-decoration-none">${esc(n)}</a>`;
+const TIPO_BADGE = { mysql: ['MySQL', '#f89820'], excel: ['Excel', '#198754'], googledrive: ['Drive', '#4285f4'], csv: ['CSV', '#6c757d'] };
+function badgeTipo(t) {
+  const [label, color] = TIPO_BADGE[t] || [t, '#6c757d'];
+  return `<span class="badge" style="background:${color};font-size:.65rem">${esc(label)}</span>`;
+}
+function toast(msg, ok = true) {
+  const t = document.getElementById('toast');
+  t.classList.toggle('text-bg-success', ok); t.classList.toggle('text-bg-danger', !ok);
+  document.getElementById('toastMsg').textContent = msg;
+  new bootstrap.Toast(t).show();
+}
+
+// ── Pestañas (con #hash para poder linkear) ─────────────────────────────────
+const TABS = ['resumen', 'linaje', 'campos', 'transformaciones'];
+document.querySelectorAll('#tabs [data-tab]').forEach(b =>
+  b.addEventListener('shown.bs.tab', () => {
+    history.replaceState(null, '', '#' + b.dataset.tab);
+    if (b.dataset.tab === 'linaje') initGrafo();
+  }));
+const inicial = TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'resumen';
+bootstrap.Tab.getOrCreateInstance(document.querySelector(`[data-tab="${inicial}"]`)).show();
+
+// ── Resumen ──────────────────────────────────────────────────────────────────
+(() => {
+  document.getElementById('nLee').textContent = D.lee.length;
+  document.getElementById('nEscribe').textContent = D.escribe.length;
+  document.getElementById('lee').innerHTML = D.lee.map(r => `
+    <div class="lin-item">
+      <div class="font-monospace small fw-semibold">${esc(r.etiqueta)}
+        ${r.inferida ? '<span class="badge text-bg-light border fw-normal ms-1" title="Consulta personalizada: la tabla se dedujo del nombre del nodo">inferida</span>' : ''}</div>
+      <div class="small text-muted"><span class="flecha">↳</span> ${
+        r.productores.length ? 'generada por ' + r.productores.map(flowLink).join(', ')
+        : r.tabla ? 'origen externo (ningún flow la genera)' : 'archivo o consulta sin tabla identificable'}</div>
+    </div>`).join('') || '<div class="lin-item small text-muted">Sin fuentes.</div>';
+  document.getElementById('escribe').innerHTML = D.escribe.map(t => `
+    <div class="lin-item">
+      <div class="font-monospace small fw-semibold">${esc(t.tabla)}</div>
+      <div class="small text-muted"><span class="flecha">↳</span> ${
+        t.lectores.length ? 'leída por ' + t.lectores.map(flowLink).join(', ') : 'ningún flow la lee'}</div>
+      ${t.modelos.length ? `<div class="small text-muted"><span class="flecha">↳</span> modelo semántico: ${t.modelos.map(m =>
+        `<a href="/modelos/${encodeURIComponent(m)}" class="text-decoration-none">${esc(m)}</a>`).join(', ')}</div>` : ''}
+    </div>`).join('') || '<div class="lin-item small text-muted">Sin outputs.</div>';
+})();
+
+// ── Linaje (se inicializa al abrir la pestaña: vis.js necesita el contenedor visible) ──
 const COLOR = {
   input:     { bg: '#4fc3f7', border: '#0288d1', font: '#fff' },
   output:    { bg: '#198754', border: '#0f5132', font: '#fff' },
@@ -126,84 +207,52 @@ const COLOR = {
   union:     { bg: '#0dcaf0', border: '#0aa2c0', font: '#212529' },
   pivot:     { bg: '#6f42c1', border: '#4e2d8a', font: '#fff' },
 };
+const LABEL_PREFIX = { join: '⋈ ', aggregate: 'Σ ', union: '∪ ', pivot: '↔ ' };
+const SHAPE = { input: 'box', output: 'box', join: 'diamond' };
+const TIPO_LABEL = { input: 'Fuente', output: 'Output', join: 'Join', aggregate: 'Agregación',
+                     clean: 'Limpieza', union: 'Unión', simpleunion: 'Unión', pivot: 'Pivot' };
+const LAYOUT = { enabled: true, direction: 'LR', sortMethod: 'directed', levelSeparation: 220, nodeSpacing: 110,
+                 treeSpacing: 200, blockShifting: true, edgeMinimization: true, parentCentralization: true };
+const nodeMap = Object.fromEntries(rawGraph.nodes.map(n => [n.id, n]));
+let network = null;
 
-const LABEL_PREFIX = {
-  input: '',
-  output: '',
-  join: '⋈ ',
-  aggregate: 'Σ ',
-  clean: '',
-  union: '∪ ',
-  pivot: '↔ ',
-};
-
-const SHAPE = {
-  input:     'box',
-  output:    'box',
-  join:      'diamond',
-  aggregate: 'ellipse',
-  clean:     'ellipse',
-  union:     'ellipse',
-  pivot:     'ellipse',
-};
-
-const visNodes = rawGraph.nodes.map(n => {
-  const c = COLOR[n.type] || COLOR.clean;
-  const prefix = LABEL_PREFIX[n.type] || '';
-  return {
-    id: n.id,
-    label: prefix + n.name,
-    color: { background: c.bg, border: c.border, highlight: { background: '#fff', border: '#333' } },
-    font: { color: c.font, size: 13 },
-    shape: SHAPE[n.type] || 'ellipse',
-    margin: 8,
-    shadow: true,
-    _type: n.type,
-  };
-});
-
-const visEdges = rawGraph.edges.map((e, i) => ({
-  id: i,
-  from: e.from,
-  to: e.to,
-  arrows: 'to',
-  color: { color: '#adb5bd', highlight: '#495057', opacity: 0.8 },
-  smooth: { type: 'cubicBezier', forceDirection: 'horizontal', roundness: 0.4 },
-  width: 2,
-}));
-
-// ── Inicializar vis.js ─────────────────────────────────────────────────────
-const nodesDS = new vis.DataSet(visNodes);
-const edgesDS = new vis.DataSet(visEdges);
-const container = document.getElementById('grafoLinaje');
-
-const LAYOUT = {
-  enabled: true,
-  direction: 'LR',
-  sortMethod: 'directed',
-  levelSeparation: 200,
-  nodeSpacing: 120,
-  treeSpacing: 200,
-  blockShifting: true,
-  edgeMinimization: true,
-  parentCentralization: true,
-};
-
-const network = new vis.Network(
-  container,
-  { nodes: nodesDS, edges: edgesDS },
-  {
-    layout: { hierarchical: LAYOUT },
-    physics: { enabled: false },
-    interaction: { dragNodes: true, hover: true, zoomView: true, dragView: true },
+function initGrafo() {
+  if (network) return;
+  const nodes = new vis.DataSet(rawGraph.nodes.map(n => {
+    const c = COLOR[n.type] || COLOR.clean;
+    return {
+      id: n.id, label: (LABEL_PREFIX[n.type] || '') + n.name, title: `${TIPO_LABEL[n.type] || n.type}: ${n.name}`,
+      color: { background: c.bg, border: c.border, highlight: { background: c.bg, border: '#212529' },
+               hover: { background: c.bg, border: '#212529' } },
+      borderWidth: 1, borderWidthSelected: 4,
+      font: { color: c.font, size: 14 }, shape: SHAPE[n.type] || 'ellipse', margin: 8, shadow: true,
+    };
+  }));
+  const edges = new vis.DataSet(rawGraph.edges.map((e, i) => ({
+    id: i, from: e.from, to: e.to, arrows: 'to', width: 2,
+    color: { color: '#adb5bd', highlight: '#495057', opacity: 0.8 },
+    smooth: { type: 'cubicBezier', forceDirection: 'horizontal', roundness: 0.4 },
+  })));
+  network = new vis.Network(document.getElementById('grafoLinaje'), { nodes, edges }, {
+    layout: { hierarchical: LAYOUT }, physics: { enabled: false },
+    interaction: { dragNodes: true, hover: true, zoomView: true, dragView: true, tooltipDelay: 150 },
     edges: { selectionWidth: 3 },
-  }
-);
+  });
+  network.once('afterDrawing', () => {
+    network.fit({ animation: false });
+    network.setOptions({ layout: { hierarchical: { enabled: false } } });
+  });
+  network.on('click', p => { if (p.nodes.length) mostrarNodo(nodeMap[p.nodes[0]]); });
 
-network.once('afterDrawing', () => {
-  network.fit({ animation: false });
-  network.setOptions({ layout: { hierarchical: { enabled: false } } });
-});
+  document.getElementById('nodosLista').innerHTML = rawGraph.nodes.map(n => `<option value="${esc(n.name)}">`).join('');
+  document.getElementById('buscarNodo').addEventListener('change', (e) => {
+    const n = rawGraph.nodes.find(x => x.name === e.target.value);
+    if (!n) return;
+    network.selectNodes([n.id]);
+    network.focus(n.id, { scale: 1.2, animation: { duration: 400 } });
+    mostrarNodo(n);
+  });
+}
 
 function reordenarGrafo() {
   network.setOptions({ layout: { hierarchical: LAYOUT }, physics: { enabled: false } });
@@ -211,123 +260,147 @@ function reordenarGrafo() {
   setTimeout(() => network.setOptions({ layout: { hierarchical: { enabled: false } } }), 200);
 }
 
-// ── Panel de detalle al hacer click ───────────────────────────────────────
-const nodeMap = Object.fromEntries(rawGraph.nodes.map(n => [n.id, n]));
-
-const TIPO_LABEL = {
-  input: 'Fuente', output: 'Output', join: 'Join',
-  aggregate: 'Agregación', clean: 'Limpieza', union: 'Unión', pivot: 'Pivot',
-};
-const TIPO_COLOR = {
-  input: '#4fc3f7', output: '#198754', join: '#fd7e14',
-  aggregate: '#ffc107', clean: '#6c757d', union: '#0dcaf0', pivot: '#6f42c1',
-};
-
-network.on('click', params => {
-  if (!params.nodes.length) return;
-  const node = nodeMap[params.nodes[0]];
+function mostrarNodo(node) {
   if (!node) return;
-  mostrarDetalle(node);
-});
-
-function mostrarDetalle(node) {
-  const panel = document.getElementById('panelNodo');
-  const badge = document.getElementById('panelNodoTipo');
-  badge.textContent = TIPO_LABEL[node.type] || node.type;
-  badge.style.background = TIPO_COLOR[node.type] || '#6c757d';
-  badge.style.color = (node.type === 'aggregate' || node.type === 'union') ? '#212529' : '#fff';
-  document.getElementById('panelNodoNombre').textContent = node.name;
-  document.getElementById('panelNodoContenido').innerHTML = renderDetalle(node);
-  panel.classList.remove('d-none');
+  const c = COLOR[node.type] || COLOR.clean;
+  document.getElementById('panelNodo').innerHTML = `
+    <span class="badge mb-1" style="background:${c.bg};color:${c.font}">${esc(TIPO_LABEL[node.type] || node.type)}</span>
+    <div class="fw-semibold mb-2">${esc(node.name)}</div>${renderDetalle(node)}`;
 }
 
 function renderDetalle(node) {
   const d = node.details || {};
   if (node.type === 'input') {
     const fields = (d.fields || []).map(f =>
-      `<span class="badge bg-light text-dark border me-1 mb-1 font-monospace">${f.name} <small class="text-muted">${f.type}</small></span>`
-    ).join('');
-    return `
-      <div class="small mb-2">
-        <span class="text-muted">Tabla:</span> <strong class="font-monospace">${d.source_table || '—'}</strong>
-        ${d.database ? `&nbsp;·&nbsp;<span class="text-muted">DB:</span> ${d.database}` : ''}
-        ${d.server ? `&nbsp;·&nbsp;<span class="text-muted">Server:</span> ${d.server}` : ''}
-        ${d.file ? `&nbsp;·&nbsp;<span class="text-muted">Archivo:</span> ${d.file}` : ''}
-      </div>
-      <div>${fields || '<span class="text-muted small">Sin campos</span>'}</div>`;
+      `<span class="badge bg-light text-dark border me-1 mb-1 font-monospace">${esc(f.name)} <small class="text-muted">${esc(f.type)}</small></span>`).join('');
+    return `<div class="mb-2"><span class="text-muted">Tabla:</span> <span class="font-monospace">${esc(d.source_table || '—')}</span>
+        ${d.database ? `<br><span class="text-muted">DB:</span> ${esc(d.database)}` : ''}
+        ${d.file ? `<br><span class="text-muted">Archivo:</span> ${esc(d.file)}` : ''}</div>
+      <div>${fields || '<span class="text-muted">Sin campos</span>'}</div>`;
   }
   if (node.type === 'output') {
-    return `<div class="small"><span class="text-muted">Tabla destino:</span> <strong class="font-monospace">${d.destination_table || '—'}</strong></div>`;
+    return `<span class="text-muted">Tabla destino:</span> <span class="font-monospace">${esc(d.destination_table || '—')}</span>`;
   }
   if (node.type === 'join') {
     const conds = (d.conditions || []).map(c =>
-      `<tr><td class="font-monospace pe-3">${c.left}</td><td class="text-muted px-2">=</td><td class="font-monospace">${c.right}</td></tr>`
-    ).join('');
-    return `
-      <div class="small mb-2"><span class="text-muted">Tipo:</span> <strong>${(d.join_type || '').toUpperCase()}</strong></div>
-      ${conds ? `<table class="table table-sm mb-0" style="width:auto"><thead><tr><th>Campo izquierdo</th><th></th><th>Campo derecho</th></tr></thead><tbody>${conds}</tbody></table>` : '<span class="text-muted small">Sin condiciones</span>'}`;
+      `<tr><td class="font-monospace">${esc(c.left)}</td><td class="text-muted px-1">=</td><td class="font-monospace">${esc(c.right)}</td></tr>`).join('');
+    return `<div class="mb-1"><span class="text-muted">Tipo:</span> <strong>${esc((d.join_type || '').toUpperCase())}</strong></div>
+      ${conds ? `<table class="table table-sm mb-0"><tbody>${conds}</tbody></table>` : '<span class="text-muted">Sin condiciones</span>'}`;
   }
   if (node.type === 'aggregate') {
-    const gb = (d.group_by || []).map(f => `<span class="badge bg-secondary me-1">${f}</span>`).join('');
-    const agg = (d.aggregates || []).map(a => `<span class="badge bg-warning text-dark me-1">${a.function}(${a.field})</span>`).join('');
-    return `
-      <div class="small mb-1"><span class="text-muted">GROUP BY:</span> ${gb || '—'}</div>
-      <div class="small"><span class="text-muted">Métricas:</span> ${agg || '—'}</div>`;
+    const gb = (d.group_by || []).map(f => `<span class="badge bg-secondary me-1 mb-1">${esc(f)}</span>`).join('');
+    const agg = (d.aggregates || []).map(a => `<span class="badge bg-warning text-dark me-1 mb-1">${esc(a.function)}(${esc(a.field)})</span>`).join('');
+    return `<div class="mb-1"><span class="text-muted">GROUP BY:</span> ${gb || '—'}</div>
+      <div><span class="text-muted">Métricas:</span> ${agg || '—'}</div>`;
   }
   if (node.type === 'clean') {
     const ops = d.operations || [];
-    if (!ops.length) return '<span class="text-muted small">Sin operaciones registradas.</span>';
-    const rows = ops.map(op => {
+    if (!ops.length) return '<span class="text-muted">Sin operaciones registradas.</span>';
+    return `<table class="table table-sm mb-0"><tbody>${ops.map(op => {
       let desc = '';
-      if (op.op === 'Renombrar') desc = `<span class="font-monospace">${op.de}</span> → <span class="font-monospace">${op.a}</span>`;
-      else if (op.op === 'Cambiar tipo') desc = `<span class="font-monospace">${op.campo}</span> → ${op.tipo}`;
-      else if (op.op === 'Filtrar') desc = `<code class="small">${(op.expr||'').substring(0,120)}</code>`;
-      else if (op.op === 'Eliminar campo') desc = `<span class="font-monospace">${op.campo}</span>`;
-      else if (op.op === 'Agregar campo' || op.op === 'Calcular') desc = `<span class="font-monospace">${op.campo}</span> = <code class="small">${(op.expr||'').substring(0,80)}</code>`;
-      else if (op.op === 'Reasignar valores') desc = `<span class="font-monospace">${op.campo}</span>`;
-      else if (op.op === 'Duplicar campo') desc = `<span class="font-monospace">${op.campo}</span>`;
-      return `<tr><td class="text-muted small pe-3 text-nowrap">${op.op}</td><td class="small">${desc}</td></tr>`;
-    }).join('');
-    return `<table class="table table-sm mb-0" style="width:auto"><tbody>${rows}</tbody></table>`;
+      if (op.op === 'Renombrar') desc = `<span class="font-monospace">${esc(op.de)}</span> → <span class="font-monospace">${esc(op.a)}</span>`;
+      else if (op.op === 'Cambiar tipo') desc = `<span class="font-monospace">${esc(op.campo)}</span> → ${esc(op.tipo)}`;
+      else if (op.op === 'Filtrar') desc = `<code>${esc((op.expr || '').substring(0, 160))}</code>`;
+      else if (op.op === 'Agregar campo' || op.op === 'Calcular')
+        desc = `<span class="font-monospace">${esc(op.campo)}</span> = <code>${esc((op.expr || '').substring(0, 160))}</code>`;
+      else desc = `<span class="font-monospace">${esc(op.campo || '')}</span>`;
+      return `<tr><td class="text-muted text-nowrap pe-2">${esc(op.op)}</td><td>${desc}</td></tr>`;
+    }).join('')}</tbody></table>`;
   }
-  return '<span class="text-muted small">Sin detalles disponibles.</span>';
+  return '<span class="text-muted">Sin detalles disponibles.</span>';
 }
 
-// ── Edición de campos ──────────────────────────────────────────────────────
-function editarCampo(id) {
-  document.querySelector(`.desc-text-${id}`).classList.add('d-none');
-  document.querySelector(`.tags-text-${id}`).classList.add('d-none');
-  document.querySelector(`.desc-input-${id}`).classList.remove('d-none');
-  document.querySelector(`.tags-input-${id}`).classList.remove('d-none');
-  document.querySelector(`.btn-edit-${id}`).classList.add('d-none');
-  document.querySelector(`.btn-save-${id}`).classList.remove('d-none');
-  document.querySelector(`.btn-cancel-${id}`).classList.remove('d-none');
+// ── Campos ───────────────────────────────────────────────────────────────────
+let fuenteSel = D.sources[0]?.id;
+document.getElementById('nCampos').textContent = D.sources.reduce((a, s) => a + s.fields.length, 0);
+
+function renderFuentes() {
+  document.getElementById('fuentes').innerHTML = D.sources.map(s => {
+    const doc = s.fields.filter(f => f.description).length;
+    return `<div class="fuente-item px-3 py-2 ${s.id === fuenteSel ? 'activo' : ''}" onclick="elegirFuente(${s.id})">
+      <div class="small fw-semibold text-truncate" title="${esc(s.node_name)}">${esc(s.node_name)}</div>
+      <div class="small text-muted d-flex gap-2 align-items-center">${badgeTipo(s.source_type)}
+        <span>${s.fields.length} campos</span>${doc ? `<span title="documentados">· ${doc} doc.</span>` : ''}</div>
+    </div>`;
+  }).join('') || '<div class="small text-muted p-3">Sin fuentes.</div>';
 }
 
-function cancelarEdicion(id) {
-  document.querySelector(`.desc-input-${id}`).classList.add('d-none');
-  document.querySelector(`.tags-input-${id}`).classList.add('d-none');
-  document.querySelector(`.desc-text-${id}`).classList.remove('d-none');
-  document.querySelector(`.tags-text-${id}`).classList.remove('d-none');
-  document.querySelector(`.btn-edit-${id}`).classList.remove('d-none');
-  document.querySelector(`.btn-save-${id}`).classList.add('d-none');
-  document.querySelector(`.btn-cancel-${id}`).classList.add('d-none');
+function elegirFuente(id) { fuenteSel = id; renderFuentes(); renderCampos(); }
+
+function renderCampos() {
+  const s = D.sources.find(x => x.id === fuenteSel);
+  const tbody = document.getElementById('tbodyCampos');
+  if (!s) { tbody.innerHTML = ''; return; }
+  document.getElementById('fuenteTitulo').textContent = s.node_name;
+  document.getElementById('fuenteTabla').textContent = s.tabla && s.tabla !== s.node_name ? s.tabla : '';
+  const q = document.getElementById('filtroCampos').value.trim().toLowerCase();
+  const fs = s.fields.filter(f => !q || [f.name, f.description, f.tags].some(v => (v || '').toLowerCase().includes(q)));
+  tbody.innerHTML = fs.map(f => `<tr>
+    <td class="text-muted small">${f.ordinal}</td>
+    <td class="font-monospace fw-semibold small">${esc(f.name)}</td>
+    <td><span class="badge bg-light text-dark border">${esc(f.type)}</span></td>
+    <td><div class="editable small ${f.description ? '' : 'text-muted'}" onclick="editar(this, ${f.id}, 'description')">${esc(f.description) || '—'}</div></td>
+    <td><div class="editable small ${f.tags ? '' : 'text-muted'}" onclick="editar(this, ${f.id}, 'tags')">${esc(f.tags) || '—'}</div></td>
+  </tr>`).join('') || '<tr><td colspan="5" class="small text-muted p-3">Ningún campo coincide.</td></tr>';
+}
+document.getElementById('filtroCampos').addEventListener('input', renderCampos);
+
+function campoPorId(id) {
+  for (const s of D.sources) { const f = s.fields.find(x => x.id === id); if (f) return f; }
 }
 
-function guardarCampo(id) {
-  const desc = document.querySelector(`.desc-input-${id}`).value;
-  const tags = document.querySelector(`.tags-input-${id}`).value;
-  fetch(`/api/catalog/fields/${id}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ description: desc, tags: tags })
-  }).then(r => r.json()).then(data => {
-    if (data.ok) {
-      document.querySelector(`.desc-text-${id}`).textContent = desc || '—';
-      document.querySelector(`.tags-text-${id}`).textContent = tags || '—';
-      cancelarEdicion(id);
+function editar(div, id, attr) {
+  if (div.querySelector('input')) return;
+  const f = campoPorId(id);
+  const input = document.createElement('input');
+  input.className = 'form-control form-control-sm';
+  input.value = f[attr] || '';
+  input.placeholder = attr === 'tags' ? 'tag1, tag2' : 'Descripción…';
+  div.replaceChildren(input);
+  input.focus();
+  let terminado = false;
+  const cerrar = async (guardar) => {
+    if (terminado) return;
+    terminado = true;
+    const valor = input.value.trim();
+    if (guardar && valor !== (f[attr] || '')) {
+      const r = await fetch(`/api/catalog/fields/${id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [attr]: valor }),
+      }).then(r => r.json()).catch(() => ({}));
+      if (r.ok) { f[attr] = valor; toast('Guardado.'); } else toast('No se pudo guardar.', false);
     }
+    renderCampos(); renderFuentes();
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') cerrar(true);
+    if (e.key === 'Escape') cerrar(false);
   });
+  input.addEventListener('blur', () => cerrar(true));
 }
+
+renderFuentes();
+renderCampos();
+
+// ── Transformaciones ─────────────────────────────────────────────────────────
+let filtroTipo = '';
+document.getElementById('nTransf').textContent = D.transforms.length;
+
+function renderTransf() {
+  const conteo = {};
+  D.transforms.forEach(t => conteo[t.type] = (conteo[t.type] || 0) + 1);
+  document.getElementById('filtrosTransf').innerHTML = [['', 'Todas', D.transforms.length],
+    ...Object.entries(conteo).sort().map(([k, n]) => [k, TIPO_LABEL[k] || k, n])].map(([k, label, n]) =>
+    `<button class="btn btn-sm ${filtroTipo === k ? 'btn-primary' : 'btn-outline-secondary'}" onclick="filtroTipo='${k}';renderTransf()">
+      ${esc(label)} <span class="badge text-bg-light">${n}</span></button>`).join('');
+  const lista = D.transforms.filter(t => !filtroTipo || t.type === filtroTipo);
+  document.getElementById('listaTransf').innerHTML = lista.map(t => {
+    const c = COLOR[t.type === 'simpleunion' ? 'union' : t.type] || COLOR.clean;
+    return `<details class="card mb-2"><summary class="card-header py-2 small">
+        <span class="badge me-2" style="background:${c.bg};color:${c.font}">${esc(TIPO_LABEL[t.type] || t.type)}</span>${esc(t.name)}</summary>
+      <div class="card-body small">${renderDetalle(t)}</div></details>`;
+  }).join('') || '<div class="small text-muted">Sin transformaciones.</div>';
+}
+renderTransf();
 </script>
 {% endblock %}

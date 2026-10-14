@@ -1,138 +1,50 @@
 {% extends "base.html" %}
+
+{% block head %}
+<style>
+  .capa-header { cursor: pointer; user-select: none; }
+  .capa-header:hover { background: #f1f4fa; }
+  .flow-row td { vertical-align: top; }
+  .tabla-chip { display: inline-block; font-family: var(--bs-font-monospace); font-size: .75rem;
+                background: #f1f3f7; border: 1px solid #e2e6ee; border-radius: 4px; padding: 0 .35rem; margin: 0 .2rem .2rem 0; }
+  .mas { font-size: .75rem; }
+  mark { padding: 0; background: #fff3a8; }
+  .stat-mini { background: #fff; border: 1px solid #e6e9f0; border-radius: 8px; padding: .5rem .9rem; }
+  .stat-mini .v { font-size: 1.25rem; font-weight: 600; }
+</style>
+{% endblock %}
+
 {% block content %}
 
-<div class="d-flex justify-content-between align-items-center mb-4">
+<div class="d-flex justify-content-between align-items-center mb-3">
   <h5 class="fw-bold mb-0"><i class="bi bi-database me-2 text-primary"></i>Catálogo de Datos</h5>
   <button class="btn btn-primary btn-sm" onclick="parsearCatalogo(this)">
     <i class="bi bi-arrow-repeat me-1"></i>Parsear flows
   </button>
 </div>
 
-<!-- Stats -->
-<div class="row g-3 mb-4">
-  <div class="col-sm-4">
-    <div class="stat-card" style="background:linear-gradient(135deg,#0f3460,#16213e)">
-      <div class="small text-white-50 mb-1">Flows parseados</div>
-      <div class="fs-3 fw-bold">{{ flows | length }}</div>
-    </div>
-  </div>
-  <div class="col-sm-4">
-    <div class="stat-card" style="background:linear-gradient(135deg,#1a5276,#21618c)">
-      <div class="small text-white-50 mb-1">Fuentes distintas</div>
-      <div class="fs-3 fw-bold">{{ total_sources }}</div>
-    </div>
-  </div>
-  <div class="col-sm-4">
-    <div class="stat-card" style="background:linear-gradient(135deg,#117a65,#1abc9c)">
-      <div class="small text-white-50 mb-1">Campos catalogados</div>
-      <div class="fs-3 fw-bold">{{ total_fields }}</div>
-    </div>
-  </div>
-</div>
+<div class="d-flex gap-2 mb-3 flex-wrap" id="stats"></div>
 
-<!-- Buscador de campos -->
-<div class="card mb-4">
-  <div class="card-header py-2">
-    <i class="bi bi-search me-2 text-secondary"></i>Buscar campo
-  </div>
-  <div class="card-body">
+<!-- Buscador único -->
+<div class="card mb-3">
+  <div class="card-body py-2">
     <div class="d-flex gap-2">
-      <input type="text" id="campoBusqueda" class="form-control form-control-sm font-monospace"
-        placeholder="Nombre del campo (ej: id_cliente, monto...)" style="max-width:380px">
-      <select id="filtroTipo" class="form-select form-select-sm" style="max-width:160px">
-        <option value="">Todas las fuentes</option>
-        <option value="mysql">MySQL</option>
-        <option value="excel">Excel</option>
-        <option value="googledrive">Google Drive</option>
-        <option value="csv">CSV</option>
-        <option value="access">Access</option>
+      <div class="input-group input-group-sm">
+        <span class="input-group-text"><i class="bi bi-search"></i></span>
+        <input type="text" id="q" class="form-control" autocomplete="off"
+          placeholder="Buscar flows, tablas o campos (ej: marketing_link, id_direccion)…">
+      </div>
+      <select id="tipo" class="form-select form-select-sm" style="max-width:180px">
+        <option value="">Todos los tipos</option>
       </select>
-      <button class="btn btn-sm btn-outline-primary" onclick="buscarCampos()">
-        <i class="bi bi-search me-1"></i>Buscar
-      </button>
-    </div>
-    <div id="resultadosBusqueda" class="mt-3" style="display:none">
-      <table class="table table-sm table-hover">
-        <thead>
-          <tr>
-            <th>Campo</th><th>Tipo</th><th>Tabla fuente</th><th>Origen</th><th>Flow</th><th>Descripción</th>
-          </tr>
-        </thead>
-        <tbody id="tbodyCampos"></tbody>
-      </table>
-      <div id="sinResultados" class="text-muted small d-none">No se encontraron campos.</div>
     </div>
   </div>
 </div>
 
-<!-- Lista de flows -->
-<div class="card">
-  <div class="card-header py-2">
-    <i class="bi bi-diagram-3 me-2 text-primary"></i>Flows en el catálogo
-  </div>
-  <div class="card-body p-0">
-    {% if flows %}
-    <table class="table table-hover mb-0">
-      <thead>
-        <tr>
-          <th>Flow</th>
-          <th>Fuentes</th>
-          <th>Outputs</th>
-          <th>Campos</th>
-          <th>Tipo de fuentes</th>
-          <th>Último parseo</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for f in flows %}
-        <tr>
-          <td>
-            <a href="/catalogo/{{ f.flow_name }}" class="fw-semibold text-decoration-none">
-              {{ f.flow_name }}
-            </a>
-          </td>
-          <td><span class="badge bg-secondary">{{ f.sources | length }}</span></td>
-          <td><span class="badge bg-info text-dark">{{ f.outputs | length }}</span></td>
-          <td>{{ f.total_fields }}</td>
-          <td>
-            {% for st in f.source_types %}
-              {% if st == 'mysql' %}
-                <span class="badge" style="background:#f89820">MySQL</span>
-              {% elif st == 'excel' %}
-                <span class="badge bg-success">Excel</span>
-              {% elif st == 'googledrive' %}
-                <span class="badge" style="background:#4285f4">Drive</span>
-              {% elif st == 'access' %}
-                <span class="badge bg-secondary">Access</span>
-              {% elif st == 'csv' or st == 'textscan' %}
-                <span class="badge bg-secondary">CSV</span>
-              {% else %}
-                <span class="badge bg-secondary">{{ st }}</span>
-              {% endif %}
-            {% endfor %}
-          </td>
-          <td class="text-muted small">{{ f.parsed_at.strftime('%d/%m/%Y %H:%M') if f.parsed_at else '—' }}</td>
-          <td>
-            <a href="/catalogo/{{ f.flow_name }}" class="btn btn-sm btn-outline-primary py-0">
-              <i class="bi bi-eye me-1"></i>Ver
-            </a>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    {% else %}
-    <div class="text-muted p-4 text-center">
-      <i class="bi bi-inbox fs-2 d-block mb-2"></i>
-      No hay flows en el catálogo todavía.<br>
-      <small>Asegurate de tener carpetas configuradas y hacé clic en <strong>Parsear flows</strong>.</small>
-    </div>
-    {% endif %}
-  </div>
-</div>
+<div id="resultados"></div>
+<div id="capas"></div>
 
-<!-- Toast de feedback -->
+<!-- Toast -->
 <div class="position-fixed bottom-0 end-0 p-3" style="z-index:9999">
   <div id="toastParse" class="toast align-items-center text-bg-primary border-0" role="alert">
     <div class="d-flex">
@@ -146,60 +58,173 @@
 
 {% block scripts %}
 <script>
+const D = {{ datos | tojson }};
+const CAPA_LABEL = { stagedata_03: 'stagedata_03', stagedata_02: 'stagedata_02', stagedata_01: 'stagedata_01',
+                     rawdata: 'rawdata', otros: 'Otros' };
+const TIPO_BADGE = { mysql: ['MySQL', '#f89820'], excel: ['Excel', '#198754'], googledrive: ['Drive', '#4285f4'],
+                     csv: ['CSV', '#6c757d'] };
+const MAX_CHIPS = 3;
+
+const esc = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const flowUrl = (n) => `/catalogo/${encodeURIComponent(n)}`;
+const flowLink = (n) => `<a href="${flowUrl(n)}" class="text-decoration-none">${esc(n)}</a>`;
+function resaltar(texto, q) {
+  const t = esc(texto);
+  if (!q) return t;
+  const i = String(texto).toLowerCase().indexOf(q);
+  if (i < 0) return t;
+  return esc(texto.slice(0, i)) + '<mark>' + esc(texto.slice(i, i + q.length)) + '</mark>' + esc(texto.slice(i + q.length));
+}
+function badgeTipo(t) {
+  const [label, color] = TIPO_BADGE[t] || [t, '#6c757d'];
+  return `<span class="badge me-1" style="background:${color};font-size:.65rem">${esc(label)}</span>`;
+}
+function chips(lista, q) {
+  if (!lista.length) return '<span class="text-muted small">—</span>';
+  const vis = lista.slice(0, MAX_CHIPS).map(t => `<span class="tabla-chip">${resaltar(t, q)}</span>`).join('');
+  const resto = lista.length - MAX_CHIPS;
+  return vis + (resto > 0 ? `<span class="mas text-muted" title="${esc(lista.slice(MAX_CHIPS).join('\n'))}">+${resto} más</span>` : '');
+}
+
+// ── Stats ────────────────────────────────────────────────────────────────────
+(() => {
+  const s = D.stats;
+  const pct = s.campos ? Math.round(100 * s.documentados / s.campos) : 0;
+  document.getElementById('stats').innerHTML = [
+    ['Flows', s.flows], ['Tablas', s.tablas], ['Campos', s.campos.toLocaleString('es-AR')],
+    ['Documentados', `${pct} %`],
+  ].map(([k, v]) => `<div class="stat-mini"><div class="small text-muted">${k}</div><div class="v">${v}</div></div>`).join('');
+  const tipos = [...new Set(D.flows.flatMap(f => f.tipos))].sort();
+  document.getElementById('tipo').innerHTML += tipos.map(t =>
+    `<option value="${esc(t)}">${esc((TIPO_BADGE[t] || [t])[0])}</option>`).join('');
+})();
+
+// ── Capas ────────────────────────────────────────────────────────────────────
+const abiertas = new Set(JSON.parse(localStorage.getItem('catalogo-capas') || '["stagedata_03"]'));
+
+function toggleCapa(c) {
+  abiertas.has(c) ? abiertas.delete(c) : abiertas.add(c);
+  localStorage.setItem('catalogo-capas', JSON.stringify([...abiertas]));
+  render();
+}
+
+function filaFlow(f, q) {
+  return `<tr class="flow-row">
+    <td style="width:32%"><a href="${flowUrl(f.name)}" class="fw-semibold text-decoration-none">${resaltar(f.name, q)}</a>
+      <div class="small text-muted">${f.campos} campos · ${esc(f.parsed_at)}</div></td>
+    <td style="width:10%">${f.tipos.map(badgeTipo).join('')}</td>
+    <td style="width:33%">${chips(f.lee, q)}</td>
+    <td style="width:25%">${chips(f.escribe, q)}</td>
+  </tr>`;
+}
+
+function tablaFlows(flows, q) {
+  return `<table class="table table-sm table-hover mb-0">
+    <thead><tr class="small text-muted"><th>Flow</th><th>Tipo</th><th>Lee</th><th>Escribe</th></tr></thead>
+    <tbody>${flows.map(f => filaFlow(f, q)).join('')}</tbody></table>`;
+}
+
+function renderCapas(flows, q, forzarAbiertas) {
+  return D.capas.map(c => {
+    const fs = flows.filter(f => f.capa === c);
+    if (!fs.length) return '';
+    const abierta = forzarAbiertas || abiertas.has(c);
+    return `<div class="card mb-2">
+      <div class="card-header py-2 capa-header d-flex align-items-center" onclick="toggleCapa('${c}')">
+        <i class="bi bi-chevron-${abierta ? 'down' : 'right'} me-2"></i>
+        <strong>${CAPA_LABEL[c]}</strong><span class="badge text-bg-light border ms-2">${fs.length} flows</span>
+      </div>
+      ${abierta ? `<div class="card-body p-0">${tablaFlows(fs, q)}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+// ── Búsqueda ─────────────────────────────────────────────────────────────────
+let busquedaCampos = 0;   // descarta respuestas viejas
+
+function render() {
+  const q = document.getElementById('q').value.trim().toLowerCase();
+  const tipo = document.getElementById('tipo').value;
+  const flows = D.flows.filter(f => !tipo || f.tipos.includes(tipo));
+  const res = document.getElementById('resultados');
+
+  if (!q) {
+    res.innerHTML = '';
+    document.getElementById('capas').innerHTML = renderCapas(flows, '', false);
+    return;
+  }
+
+  const fFlows = flows.filter(f => f.name.toLowerCase().includes(q));
+  const fTablas = D.tablas.filter(t => t.tabla.includes(q));
+  res.innerHTML = `
+    ${seccion('Flows', fFlows.length, fFlows.length ? renderCapas(fFlows, q, true) : '')}
+    ${seccion('Tablas', fTablas.length, fTablas.length ? renderTablas(fTablas.slice(0, 50), q) +
+      (fTablas.length > 50 ? `<div class="small text-muted p-2">Mostrando 50 de ${fTablas.length}.</div>` : '') : '')}
+    <div id="secCampos">${seccion('Campos', '…', '<div class="small text-muted p-2">Buscando…</div>')}</div>`;
+  document.getElementById('capas').innerHTML = '';
+  buscarCampos(q, tipo);
+}
+
+function seccion(titulo, n, cuerpo) {
+  return `<div class="mb-3">
+    <div class="small fw-semibold text-muted text-uppercase mb-1" style="letter-spacing:.5px">${titulo} (${n})</div>
+    ${cuerpo || '<div class="small text-muted fst-italic mb-2">Sin resultados.</div>'}
+  </div>`;
+}
+
+function renderTablas(tablas, q) {
+  const lista = (arr) => arr.length ? arr.map(flowLink).join(', ') : '<span class="text-muted">—</span>';
+  return `<div class="card"><table class="table table-sm mb-0">
+    <thead><tr class="small text-muted"><th>Tabla</th><th>Escrita por</th><th>Leída por</th><th>Modelos</th></tr></thead>
+    <tbody>${tablas.map(t => `<tr>
+      <td class="font-monospace small">${resaltar(t.tabla, q)}</td>
+      <td class="small">${lista(t.escriben)}</td>
+      <td class="small">${lista(t.leen)}</td>
+      <td class="small">${t.modelos.length ? t.modelos.map(m =>
+        `<a href="/modelos/${encodeURIComponent(m)}" class="text-decoration-none">${esc(m)}</a>`).join(', ') : '<span class="text-muted">—</span>'}</td>
+    </tr>`).join('')}</tbody></table></div>`;
+}
+
+async function buscarCampos(q, tipo) {
+  const id = ++busquedaCampos;
+  const cont = () => document.getElementById('secCampos');
+  if (q.length < 2) { cont().innerHTML = ''; return; }
+  const r = await fetch(`/api/catalog/buscar-campos?${new URLSearchParams({ q, tipo })}`).then(r => r.json());
+  if (id !== busquedaCampos || !cont()) return;
+  const cuerpo = r.campos.length ? `<div class="card"><table class="table table-sm mb-0">
+    <thead><tr class="small text-muted"><th>Campo</th><th>Tipo</th><th>Fuente</th><th>Flow</th><th>Descripción</th></tr></thead>
+    <tbody>${r.campos.map(c => `<tr>
+      <td class="font-monospace small fw-semibold">${resaltar(c.name, q)}</td>
+      <td><span class="badge bg-light text-dark border">${esc(c.type)}</span></td>
+      <td class="small">${badgeTipo(c.source_type)}<span class="font-monospace">${esc(c.fuente)}</span></td>
+      <td class="small"><a href="${flowUrl(c.flow)}#campos" class="text-decoration-none">${esc(c.flow)}</a></td>
+      <td class="small text-muted">${c.description ? resaltar(c.description, q) : '—'}</td>
+    </tr>`).join('')}</tbody></table>
+    ${r.total > r.campos.length ? `<div class="small text-muted p-2">Mostrando ${r.campos.length} de ${r.total}. Afiná la búsqueda.</div>` : ''}</div>` : '';
+  cont().innerHTML = seccion('Campos', r.total, cuerpo);
+}
+
+let timer;
+document.getElementById('q').addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(render, 200); });
+document.getElementById('tipo').addEventListener('change', render);
+document.addEventListener('keydown', (e) => {
+  if (e.key === '/' && document.activeElement.tagName !== 'INPUT') { e.preventDefault(); document.getElementById('q').focus(); }
+});
+
+// ── Parsear ──────────────────────────────────────────────────────────────────
 function parsearCatalogo(btn) {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Parseando...';
   fetch('/api/catalog/parse', { method: 'POST' })
     .then(r => r.json())
     .then(data => {
-      const toast = new bootstrap.Toast(document.getElementById('toastParse'));
-      document.getElementById('toastMsg').textContent = data.mensaje || 'Parseo iniciado.';
-      toast.show();
+      document.getElementById('toastMsg').textContent = data.mensaje || data.error || 'Parseo iniciado.';
+      new bootstrap.Toast(document.getElementById('toastParse')).show();
       setTimeout(() => location.reload(), 4000);
     })
     .catch(() => { btn.disabled = false; btn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>Parsear flows'; });
 }
 
-function buscarCampos() {
-  const q = document.getElementById('campoBusqueda').value.trim();
-  const tipo = document.getElementById('filtroTipo').value;
-  if (!q && !tipo) return;
-
-  const params = new URLSearchParams();
-  if (q) params.set('q', q);
-  if (tipo) params.set('source_type', tipo);
-
-  fetch('/api/catalog/fields?' + params)
-    .then(r => r.json())
-    .then(fields => {
-      const tbody = document.getElementById('tbodyCampos');
-      const sinRes = document.getElementById('sinResultados');
-      tbody.innerHTML = '';
-      document.getElementById('resultadosBusqueda').style.display = 'block';
-
-      if (!fields.length) {
-        sinRes.classList.remove('d-none');
-        return;
-      }
-      sinRes.classList.add('d-none');
-
-      fields.forEach(f => {
-        const flowName = '—';
-        tbody.innerHTML += `
-          <tr>
-            <td class="font-monospace fw-semibold">${f.field_name}</td>
-            <td><span class="badge bg-secondary">${f.field_type}</span></td>
-            <td class="text-muted small">${f.source_table || '—'}</td>
-            <td><span class="badge bg-light text-dark border">${f.source_type || '—'}</span></td>
-            <td><a href="/catalogo/${f.flow_name}" class="small text-decoration-none">${f.flow_name || '—'}</a></td>
-            <td class="text-muted small">${f.description || '<em class="text-muted">sin descripción</em>'}</td>
-          </tr>`;
-      });
-    });
-}
-
-document.getElementById('campoBusqueda').addEventListener('keydown', e => {
-  if (e.key === 'Enter') buscarCampos();
-});
+render();
 </script>
 {% endblock %}
