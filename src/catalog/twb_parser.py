@@ -19,6 +19,42 @@ def _clean(name: str) -> str:
     return name.strip("[]")
 
 
+# Simple Tableau bracket reference: [column] or [table].[column] with no operators
+_SIMPLE_BRACKET_RE = re.compile(r"^\[([^\[\]]+)\](?:\.\[([^\[\]]+)\])?$")
+
+# Tableau formula patterns (anything beyond a plain bracket reference)
+_TABLEAU_FORMULA_RE = re.compile(
+    r"IF\s+.+THEN|\bIIF\s*\(|\bZN\s*\(|\bATTR\s*\(|\bFIXED\s*\{"
+    r"|\bINCLUDE\s*\{|\bEXCLUDE\s*\{|\[Calculation_\d+\]"
+    r"|=|<|>|\bAND\b|\bOR\b|\bNOT\b|\bCASE\b|\bWHEN\b",
+    re.IGNORECASE,
+)
+
+
+def _normalize_expression(formula: str, col_name: str, ctmap: dict) -> str:
+    """
+    Convert a TWB expression to MySQL SQL where possible.
+    - Simple bracket refs like [column] or [table].[column] → table.column
+    - Complex Tableau formulas (IF/THEN, calculations, operators) → kept as-is
+      (will be flagged at query time)
+    - Empty formula → fall back to ctmap or col_name
+    """
+    if not formula:
+        if col_name in ctmap:
+            return f"`{ctmap[col_name]}`.`{_clean(col_name)}`"
+        return f"`{_clean(col_name)}`"
+
+    m = _SIMPLE_BRACKET_RE.match(formula.strip())
+    if m and not _TABLEAU_FORMULA_RE.search(formula):
+        table_part, col_part = m.group(1), m.group(2)
+        if col_part:
+            return f"`{table_part}`.`{col_part}`"
+        return f"`{table_part}`"
+
+    # Complex Tableau formula — keep raw so the editor can show it
+    return formula
+
+
 def _safe_name(caption: str) -> str:
     s = caption.lower()
     s = re.sub(r"[^a-z0-9_]+", "_", s)
@@ -130,13 +166,7 @@ def parse_twb(content: bytes) -> list[TwbDatasource]:
                 continue
             seen_captions.add(display)
 
-            formula = info["formula"]
-            if formula:
-                expression = formula
-            elif fn in ctmap:
-                expression = f"{ctmap[fn]}.{_clean(fn)}"
-            else:
-                expression = _clean(fn)
+            expression = _normalize_expression(info["formula"], fn, ctmap)
 
             if role == "dimension":
                 dimensions.append({

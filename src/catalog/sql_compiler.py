@@ -4,6 +4,7 @@ El LLM nunca escribe SQL libre: todo se deriva del modelo.
 """
 import logging
 import os
+import re
 import time
 
 import pymysql
@@ -25,6 +26,33 @@ _MAX_ROWS = int(os.getenv("DW_MAX_ROWS", "5000"))
 
 class ConsultaError(Exception):
     pass
+
+
+# Tableau formula patterns — these are NOT valid MySQL SQL
+_TABLEAU_PATTERNS = [
+    r"\[Calculation_\d+\]",      # [Calculation_123456]
+    r"IF\s+.+THEN",              # IF ... THEN
+    r"\bIIF\s*\(",               # IIF(
+    r"\bZN\s*\(",                # ZN(
+    r"\bATTR\s*\(",              # ATTR(
+    r"\bFIXED\s*\{",             # { FIXED ... }
+    r"\bINCLUDE\s*\{",           # { INCLUDE ... }
+    r"\bEXCLUDE\s*\{",           # { EXCLUDE ... }
+    r"\bDATEPART\s*\(",          # DATEPARTNAME( (Tableau version)
+    r"'\s*\}\s*\)",              # closing LOD expressions
+]
+_TABLEAU_RE = re.compile("|".join(_TABLEAU_PATTERNS), re.IGNORECASE)
+
+
+def _check_tableau_expr(name: str, expression: str, kind: str):
+    """Raise ConsultaError if expression looks like Tableau formula syntax."""
+    if _TABLEAU_RE.search(expression):
+        raise ConsultaError(
+            f"La {kind} '{name}' tiene una expresión en sintaxis Tableau "
+            f"que no es SQL válido para MySQL:\n  {expression!r}\n"
+            f"Editá la expresión en el editor de modelos con SQL válido "
+            f"(ej: `tabla.columna` o `SUM(tabla.columna)`)."
+        )
 
 
 def _conn():
@@ -186,6 +214,14 @@ def consultar(
             raise ConsultaError(
                 f"Campo de periodo '{periodo['campo']}' no es una dimensión del modelo."
             )
+
+        # ── Validar que las expresiones sean SQL, no fórmulas Tableau ───────
+        for d in dimensiones:
+            _check_tableau_expr(d, dim_map[d].expression, "dimensión")
+        for m_name in metricas:
+            _check_tableau_expr(m_name, met_map[m_name].expression, "métrica")
+        for k in filtros:
+            _check_tableau_expr(k, dim_map[k].expression, "filtro/dimensión")
 
         # Multi-tenant: si el modelo tiene cliente_id, es obligatorio en filtros
         if "cliente_id" in dim_map and "cliente_id" not in filtros:
