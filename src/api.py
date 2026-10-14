@@ -902,12 +902,14 @@ def _modelo_to_dict(m: SemanticModel) -> dict:
                 "joins": e.joins or [],
                 "dimensions": [
                     {"name": d.name, "expression": d.expression,
-                     "data_type": d.data_type or "string", "description": d.description or ""}
+                     "data_type": d.data_type or "string", "description": d.description or "",
+                     "tableau_formula": d.tableau_formula}
                     for d in e.dimensions
                 ],
                 "metrics": [
                     {"name": mt.name, "expression": mt.expression,
-                     "format": mt.format or "number", "description": mt.description or ""}
+                     "format": mt.format or "number", "description": mt.description or "",
+                     "tableau_formula": mt.tableau_formula}
                     for mt in e.metrics
                 ],
             }
@@ -934,6 +936,7 @@ def _save_entities(modelo: SemanticModel, entities_data: list, db: Session):
                 expression=(d.get("expression") or "").strip(),
                 data_type=d.get("data_type") or "string",
                 description=(d.get("description") or "").strip() or None,
+                tableau_formula=d.get("tableau_formula"),
             ))
         for mt in e_data.get("metrics") or []:
             db.add(SemanticMetric(
@@ -942,6 +945,7 @@ def _save_entities(modelo: SemanticModel, entities_data: list, db: Session):
                 expression=(mt.get("expression") or "").strip(),
                 format=mt.get("format") or "number",
                 description=(mt.get("description") or "").strip() or None,
+                tableau_formula=mt.get("tableau_formula"),
             ))
 
 
@@ -978,7 +982,12 @@ def pagina_modelo_editor(nombre: str, request: Request, db: Session = Depends(ge
     return templates.TemplateResponse(request, "modelos_editor.html", {
         "modelo": modelo,
         "tablas_catalogo": tablas,
-        "estado_inicial": _modelo_to_dict(modelo),
+        "estado_inicial": {
+            "name": modelo.name,
+            "description": modelo.description or "",
+            "entities": [_entidad_to_dict(e) for e in modelo.entities],
+            "campos": _campos_modelo(modelo),
+        },
         "active": "modelos",
     })
 
@@ -1027,6 +1036,306 @@ def api_eliminar_modelo(nombre: str, db: Session = Depends(get_catalog_db)):
     if not modelo:
         return JSONResponse({"ok": False, "error": "Modelo no encontrado."})
     db.delete(modelo)
+    db.commit()
+    return JSONResponse({"ok": True})
+
+
+# ── Editor de modelos: endpoints por campo ────────────────────────────────────
+# Cada dimensión/métrica se crea, edita y borra por separado (el endpoint
+# /editar reemplaza el modelo completo y pisa ediciones concurrentes).
+
+from fastapi.encoders import jsonable_encoder
+from src.catalog.sql_compiler import (
+    consultar as _consultar_dw, ConsultaError, es_sintaxis_tableau, columnas_tabla,
+)
+from src.catalog.tableau_to_sql import NoTraducible, make_field_resolver, translate_formula
+
+_KINDS = {"dimension": SemanticDimension, "metric": SemanticMetric}
+_JOIN_TYPES = {"LEFT", "INNER", "RIGHT"}
+
+
+def _modelo_o_404(db: Session, nombre: str) -> SemanticModel:
+    from fastapi import HTTPException
+    modelo = db.query(SemanticModel).filter(SemanticModel.name == nombre).first()
+    if not modelo:
+        raise HTTPException(status_code=404, detail="Modelo no encontrado.")
+    return modelo
+
+
+def _campo_to_dict(c, kind: str) -> dict:
+    expr = c.expression or ""
+    pendiente = es_sintaxis_tableau(expr)
+    return {
+        "id": c.id,
+        "kind": kind,
+        "entity_id": c.entity_id,
+        "name": c.name,
+        "expression": expr,
+        "data_type": getattr(c, "data_type", None),
+        "format": getattr(c, "format", None),
+        "description": c.description or "",
+        # Modelos importados antes de esta columna: la expresión pendiente ES la fórmula
+        "tableau_formula": c.tableau_formula or (expr if pendiente else None),
+        "estado": "pendiente" if pendiente else "sql",
+    }
+
+
+def _entidad_to_dict(e: SemanticEntity) -> dict:
+    return {"id": e.id, "name": e.name, "description": e.description or "",
+            "base_table": e.base_table, "joins": e.joins or []}
+
+
+def _campos_modelo(modelo: SemanticModel) -> list[dict]:
+    campos = []
+    for e in modelo.entities:
+        campos += [_campo_to_dict(d, "dimension") for d in e.dimensions]
+        campos += [_campo_to_dict(m, "metric") for m in e.metrics]
+    return campos
+
+
+def _validar_campo(entity: SemanticEntity, kind: str, data: dict, actual=None) -> str | None:
+    name = (data.get("name") or "").strip()
+    expr = (data.get("expression") or "").strip()
+    if not name:
+        return "El nombre es obligatorio."
+    if not expr:
+        return "La expresión es obligatoria."
+    hermanos = entity.dimensions if kind == "dimension" else entity.metrics
+    if any(c.name == name and (actual is None or c.id != actual.id) for c in hermanos):
+        tipo = "una dimensión" if kind == "dimension" else "una métrica"
+        return f"Ya existe {tipo} llamada '{name}' en esta entidad."
+    # Se permite guardar una expresión Tableau sin tocar (ej. solo cambia la descripción)
+    if es_sintaxis_tableau(expr) and not (actual is not None and actual.expression == expr):
+        return ("La expresión está en sintaxis Tableau y el compilador la va a rechazar. "
+                "Usá «Convertir automáticamente» o escribila en SQL.")
+    return None
+
+
+def _aplicar_campo(c, kind: str, data: dict) -> None:
+    c.name = data["name"].strip()
+    c.expression = data["expression"].strip()
+    c.description = (data.get("description") or "").strip() or None
+    if kind == "dimension":
+        c.data_type = data.get("data_type") or "string"
+    else:
+        c.format = data.get("format") or "number"
+
+
+@app.get("/api/modelos/{nombre}/campos")
+def api_listar_campos(nombre: str, db: Session = Depends(get_catalog_db)):
+    modelo = _modelo_o_404(db, nombre)
+    return JSONResponse({"ok": True, "campos": _campos_modelo(modelo)})
+
+
+@app.post("/api/modelos/{nombre}/campos")
+async def api_crear_campo(nombre: str, request: Request, db: Session = Depends(get_catalog_db)):
+    data = await request.json()
+    modelo = _modelo_o_404(db, nombre)
+    kind = data.get("kind")
+    if kind not in _KINDS:
+        return JSONResponse({"ok": False, "error": "Tipo de campo inválido."})
+    entity = next((e for e in modelo.entities if e.id == data.get("entity_id")), None)
+    if entity is None:
+        return JSONResponse({"ok": False, "error": "Entidad inválida."})
+    error = _validar_campo(entity, kind, data)
+    if error:
+        return JSONResponse({"ok": False, "error": error})
+    campo = _KINDS[kind](entity_id=entity.id)
+    _aplicar_campo(campo, kind, data)
+    db.add(campo)
+    modelo.updated_at = _dt.utcnow()
+    db.commit()
+    db.refresh(campo)
+    return JSONResponse({"ok": True, "campo": _campo_to_dict(campo, kind)})
+
+
+def _campo_o_error(modelo: SemanticModel, kind: str, campo_id: int):
+    if kind not in _KINDS:
+        return None
+    for e in modelo.entities:
+        for c in (e.dimensions if kind == "dimension" else e.metrics):
+            if c.id == campo_id:
+                return e, c
+    return None
+
+
+@app.put("/api/modelos/{nombre}/campos/{kind}/{campo_id}")
+async def api_editar_campo(nombre: str, kind: str, campo_id: int, request: Request,
+                           db: Session = Depends(get_catalog_db)):
+    data = await request.json()
+    modelo = _modelo_o_404(db, nombre)
+    found = _campo_o_error(modelo, kind, campo_id)
+    if not found:
+        return JSONResponse({"ok": False, "error": "Campo no encontrado."})
+    entity, campo = found
+    error = _validar_campo(entity, kind, data, actual=campo)
+    if error:
+        return JSONResponse({"ok": False, "error": error})
+    # Modelos importados antes de tableau_formula: la fórmula original solo vive en
+    # la expresión; se preserva antes de reemplazarla por SQL.
+    if not campo.tableau_formula and es_sintaxis_tableau(campo.expression or ""):
+        campo.tableau_formula = campo.expression
+    _aplicar_campo(campo, kind, data)
+    modelo.updated_at = _dt.utcnow()
+    db.commit()
+    db.refresh(campo)
+    return JSONResponse({"ok": True, "campo": _campo_to_dict(campo, kind)})
+
+
+@app.delete("/api/modelos/{nombre}/campos/{kind}/{campo_id}")
+def api_eliminar_campo(nombre: str, kind: str, campo_id: int, db: Session = Depends(get_catalog_db)):
+    modelo = _modelo_o_404(db, nombre)
+    found = _campo_o_error(modelo, kind, campo_id)
+    if not found:
+        return JSONResponse({"ok": False, "error": "Campo no encontrado."})
+    db.delete(found[1])
+    modelo.updated_at = _dt.utcnow()
+    db.commit()
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/modelos/{nombre}/probar")
+async def api_probar_campo(nombre: str, request: Request, db: Session = Depends(get_catalog_db)):
+    """Ejecuta la expresión (sin guardarla) con el mismo compilador que usa el MCP."""
+    data = await request.json()
+    _modelo_o_404(db, nombre)
+    kind = data.get("kind")
+    campo = (data.get("name") or "").strip() or "__prueba__"
+    expr = (data.get("expression") or "").strip()
+    if not expr:
+        return JSONResponse({"ok": False, "error": "La expresión está vacía."})
+    periodo = data.get("periodo") or None
+    if periodo and not periodo.get("campo"):
+        periodo = None
+    filtros = {k: v for k, v in (data.get("filtros") or {}).items() if k and v not in (None, "")}
+
+    if kind == "metric":
+        metricas, dimensiones, limite = [campo], [], 1
+        overrides = {"metricas": {campo: {"expression": expr}}}
+    else:
+        metrica = data.get("metrica")
+        metricas, dimensiones, limite = ([metrica] if metrica else []), [campo], 20
+        overrides = {"dimensiones": {campo: {"expression": expr,
+                                             "data_type": data.get("data_type")}}}
+    try:
+        r = _consultar_dw(nombre, metricas, dimensiones, filtros=filtros, periodo=periodo,
+                          limite=limite, overrides=overrides)
+    except ConsultaError as e:
+        return JSONResponse({"ok": False, "error": str(e)})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e), "sql": getattr(e, "sql", None)})
+    return JSONResponse(jsonable_encoder({"ok": True, **r}))
+
+
+@app.post("/api/modelos/{nombre}/convertir")
+async def api_convertir_formula(nombre: str, request: Request, db: Session = Depends(get_catalog_db)):
+    """Convierte una fórmula Tableau a SQL resolviendo referencias contra los campos del modelo."""
+    data = await request.json()
+    modelo = _modelo_o_404(db, nombre)
+    formula = (data.get("formula") or "").strip()
+    if not formula:
+        return JSONResponse({"ok": False, "error": "No hay fórmula de Tableau para convertir."})
+    excluir = (data.get("kind"), data.get("name"))
+    campos: dict[str, dict] = {}
+    for c in _campos_modelo(modelo):
+        # El campo que se convierte no se resuelve a sí mismo: [X] dentro de X es la columna X
+        if (c["kind"], c["name"]) != excluir:
+            campos.setdefault(c["name"], c)
+    try:
+        sql = translate_formula(formula, make_field_resolver(campos, es_sintaxis_tableau))
+    except NoTraducible as e:
+        return JSONResponse({"ok": False, "error": f"No se puede convertir automáticamente: {e}"})
+    return JSONResponse({"ok": True, "sql": sql})
+
+
+@app.get("/api/modelos/{nombre}/columnas")
+def api_columnas_modelo(nombre: str, db: Session = Depends(get_catalog_db)):
+    """Columnas del DW de las tablas del modelo (autocompletado del editor)."""
+    modelo = _modelo_o_404(db, nombre)
+    tablas, base = [], None
+    for e in modelo.entities:
+        base = base or e.base_table
+        tablas += [e.base_table] + [j.get("table") for j in (e.joins or [])]
+    try:
+        return JSONResponse({"ok": True, "base_table": base, "tablas": columnas_tabla(tablas)})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)})
+
+
+@app.put("/api/modelos/{nombre}")
+async def api_editar_cabecera_modelo(nombre: str, request: Request, db: Session = Depends(get_catalog_db)):
+    data = await request.json()
+    modelo = _modelo_o_404(db, nombre)
+    nuevo = (data.get("name") or "").strip()
+    if not nuevo:
+        return JSONResponse({"ok": False, "error": "El nombre es obligatorio."})
+    if nuevo != nombre and db.query(SemanticModel).filter(SemanticModel.name == nuevo).first():
+        return JSONResponse({"ok": False, "error": f"Ya existe un modelo '{nuevo}'."})
+    modelo.name = nuevo
+    modelo.description = (data.get("description") or "").strip() or None
+    modelo.updated_at = _dt.utcnow()
+    db.commit()
+    return JSONResponse({"ok": True, "name": modelo.name})
+
+
+def _datos_entidad(data: dict) -> tuple[dict | None, str | None]:
+    name = (data.get("name") or "").strip()
+    base = (data.get("base_table") or "").strip()
+    if not name or not base:
+        return None, "Nombre y tabla base son obligatorios."
+    joins = []
+    for j in data.get("joins") or []:
+        table = (j.get("table") or "").strip()
+        if not table:
+            continue
+        tipo = (j.get("type") or "LEFT").upper()
+        if tipo not in _JOIN_TYPES:
+            return None, f"Tipo de join inválido: {tipo}"
+        joins.append({"table": table, "alias": (j.get("alias") or "").strip() or table,
+                      "on": (j.get("on") or "").strip(), "type": tipo})
+    return {"name": name, "description": (data.get("description") or "").strip() or None,
+            "base_table": base, "joins": joins}, None
+
+
+@app.post("/api/modelos/{nombre}/entidades")
+async def api_crear_entidad(nombre: str, request: Request, db: Session = Depends(get_catalog_db)):
+    modelo = _modelo_o_404(db, nombre)
+    datos, error = _datos_entidad(await request.json())
+    if error:
+        return JSONResponse({"ok": False, "error": error})
+    entity = SemanticEntity(model_id=modelo.id, **datos)
+    db.add(entity)
+    modelo.updated_at = _dt.utcnow()
+    db.commit()
+    db.refresh(entity)
+    return JSONResponse({"ok": True, "entidad": _entidad_to_dict(entity)})
+
+
+@app.put("/api/modelos/{nombre}/entidades/{entity_id}")
+async def api_editar_entidad(nombre: str, entity_id: int, request: Request,
+                             db: Session = Depends(get_catalog_db)):
+    modelo = _modelo_o_404(db, nombre)
+    entity = next((e for e in modelo.entities if e.id == entity_id), None)
+    if entity is None:
+        return JSONResponse({"ok": False, "error": "Entidad no encontrada."})
+    datos, error = _datos_entidad(await request.json())
+    if error:
+        return JSONResponse({"ok": False, "error": error})
+    for k, v in datos.items():
+        setattr(entity, k, v)
+    modelo.updated_at = _dt.utcnow()
+    db.commit()
+    return JSONResponse({"ok": True, "entidad": _entidad_to_dict(entity)})
+
+
+@app.delete("/api/modelos/{nombre}/entidades/{entity_id}")
+def api_eliminar_entidad(nombre: str, entity_id: int, db: Session = Depends(get_catalog_db)):
+    modelo = _modelo_o_404(db, nombre)
+    entity = next((e for e in modelo.entities if e.id == entity_id), None)
+    if entity is None:
+        return JSONResponse({"ok": False, "error": "Entidad no encontrada."})
+    db.delete(entity)
+    modelo.updated_at = _dt.utcnow()
     db.commit()
     return JSONResponse({"ok": True})
 
@@ -1093,6 +1402,7 @@ async def api_importar_twb(file: UploadFile = File(...), db: Session = Depends(g
                 description=dim["description"] or None,
                 expression=dim["expression"],
                 data_type=dim["data_type"] or "string",
+                tableau_formula=dim.get("tableau_formula"),
             ))
 
         for met in ds.metrics:
@@ -1102,6 +1412,7 @@ async def api_importar_twb(file: UploadFile = File(...), db: Session = Depends(g
                 description=met["description"] or None,
                 expression=met["expression"],
                 format=met["format"] or "number",
+                tableau_formula=met.get("tableau_formula"),
             ))
 
         db.commit()

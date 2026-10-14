@@ -25,6 +25,7 @@ from sqlalchemy import text
 
 Base.metadata.create_all(bind=engine)
 catalog_models.BaseCatalog.metadata.create_all(bind=engine_catalog)
+models_semantic.migrar_columnas_semanticas(engine_catalog)
 
 # Migración MySQL: agregar columna graph_data si no existe
 with engine_catalog.connect() as conn:

@@ -7,6 +7,7 @@ import os
 import re
 import time
 from datetime import date, timedelta
+from types import SimpleNamespace
 
 import pymysql
 import pymysql.cursors
@@ -41,13 +42,21 @@ _TABLEAU_PATTERNS = [
     r"\bEXCLUDE\s*\{",           # { EXCLUDE ... }
     r"\bDATEPART\s*\(",          # DATEPARTNAME( (Tableau version)
     r"'\s*\}\s*\)",              # closing LOD expressions
+    r"\bCOUNTD\s*\(",            # COUNTD(
+    r"\b(TODAY|DATETRUNC|DATEADD)\s*\(",
+    r"\bELSEIF\b",
+    r"\[[^\]\n']+\]",            # [campo] — MySQL no usa corchetes
 ]
 _TABLEAU_RE = re.compile("|".join(_TABLEAU_PATTERNS), re.IGNORECASE)
 
 
+def es_sintaxis_tableau(expression: str) -> bool:
+    return bool(_TABLEAU_RE.search(expression or ""))
+
+
 def _check_tableau_expr(name: str, expression: str, kind: str):
     """Raise ConsultaError if expression looks like Tableau formula syntax."""
-    if _TABLEAU_RE.search(expression):
+    if es_sintaxis_tableau(expression):
         raise ConsultaError(
             f"La {kind} '{name}' tiene una expresión en sintaxis Tableau "
             f"que no es SQL válido para MySQL:\n  {expression!r}\n"
@@ -196,6 +205,7 @@ def consultar(
     filtros: dict | None = None,
     periodo: dict | None = None,
     limite: int = 1000,
+    overrides: dict | None = None,
 ) -> dict:
     """
     Ejecuta una consulta derivada del modelo semántico.
@@ -209,6 +219,9 @@ def consultar(
                      Si el campo es date/datetime acepta YYYY-MM o YYYY-MM-DD
                      (ambos extremos inclusive); si no, compara el valor tal cual.
         limite:      Máximo de filas (tope: DW_MAX_ROWS).
+        overrides:   {"dimensiones": {nombre: {"expression", "data_type"}},
+                      "metricas": {nombre: {"expression"}}} — reemplaza o agrega
+                     campos sin guardarlos (lo usa el editor para "Probar").
 
     Returns:
         {"sql": ..., "columnas": ..., "filas": ..., "total": ..., "tiempo_ms": ..., "error": null}
@@ -231,6 +244,11 @@ def consultar(
         entity = m.entities[0]
         dim_map = {d.name: d for d in entity.dimensions}
         met_map = {mt.name: mt for mt in entity.metrics}
+        for nombre, o in ((overrides or {}).get("dimensiones") or {}).items():
+            dim_map[nombre] = SimpleNamespace(
+                name=nombre, expression=o["expression"], data_type=o.get("data_type"))
+        for nombre, o in ((overrides or {}).get("metricas") or {}).items():
+            met_map[nombre] = SimpleNamespace(name=nombre, expression=o["expression"])
 
         # ── Validaciones ─────────────────────────────────────────────────────
         bad_mets = [x for x in metricas if x not in met_map]
@@ -286,6 +304,9 @@ def consultar(
         with conn.cursor() as cursor:
             cursor.execute(sql_template, params)
             rows = cursor.fetchall()
+    except Exception as e:
+        e.sql = _render_sql(sql_template, params)  # para mostrar en el editor
+        raise
     finally:
         conn.close()
 
@@ -307,3 +328,27 @@ def consultar(
         "tiempo_ms": elapsed,
         "error": None,
     }
+
+
+def columnas_tabla(tablas: list[str]) -> dict[str, list[str]]:
+    """Columnas de las tablas del DW, para autocompletar en el editor."""
+    tablas = [t for t in tablas if t]
+    if not tablas:
+        return {}
+    marcadores = ", ".join(["%s"] * len(tablas))
+    conn = _conn()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT TABLE_NAME, COLUMN_NAME FROM information_schema.COLUMNS "
+                f"WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN ({marcadores}) "
+                "ORDER BY TABLE_NAME, ORDINAL_POSITION",
+                tablas,
+            )
+            rows = cursor.fetchall()
+    finally:
+        conn.close()
+    out: dict[str, list[str]] = {}
+    for r in rows:
+        out.setdefault(r["TABLE_NAME"], []).append(r["COLUMN_NAME"])
+    return out

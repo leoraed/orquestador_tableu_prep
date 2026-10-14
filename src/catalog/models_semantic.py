@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import Integer, String, DateTime, Text, JSON, ForeignKey
+from sqlalchemy import Integer, String, DateTime, Text, JSON, ForeignKey, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from src.catalog.db import BaseCatalog
 
@@ -47,6 +47,7 @@ class SemanticDimension(BaseCatalog):
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     expression: Mapped[str] = mapped_column(Text, nullable=False)
     data_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    tableau_formula: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     entity: Mapped["SemanticEntity"] = relationship(back_populates="dimensions")
 
@@ -60,5 +61,23 @@ class SemanticMetric(BaseCatalog):
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     expression: Mapped[str] = mapped_column(Text, nullable=False)
     format: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    tableau_formula: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     entity: Mapped["SemanticEntity"] = relationship(back_populates="metrics")
+
+
+def migrar_columnas_semanticas(engine) -> None:
+    """Agrega columnas nuevas a tablas existentes (MySQL no tiene ADD COLUMN IF NOT EXISTS)."""
+    nuevas = [
+        ("semantic_dimensions", "tableau_formula", "TEXT NULL"),
+        ("semantic_metrics", "tableau_formula", "TEXT NULL"),
+    ]
+    with engine.connect() as conn:
+        for tabla, columna, ddl in nuevas:
+            existe = conn.execute(text(
+                "SELECT COUNT(*) FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :t AND COLUMN_NAME = :c"
+            ), {"t": tabla, "c": columna}).scalar()
+            if not existe:
+                conn.execute(text(f"ALTER TABLE {tabla} ADD COLUMN {columna} {ddl}"))
+                conn.commit()

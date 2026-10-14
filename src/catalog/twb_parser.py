@@ -23,6 +23,20 @@ def _clean(name: str) -> str:
     return name.strip("[]")
 
 
+_REF_RE = re.compile(r"\[(?:[^\]]|\]\])*\](?:\.\[(?:[^\]]|\]\])*\])?")
+
+
+def _formula_legible(formula: str, defs: dict) -> str:
+    """Reemplaza nombres internos ([Calculation_123]) por su caption ([cond_OrbithHome])."""
+    def repl(m: re.Match) -> str:
+        ref = m.group()
+        info = defs.get(ref)
+        if info and info["caption"] != _clean(ref):
+            return "[" + info["caption"].replace("]", "]]") + "]"
+        return ref
+    return _REF_RE.sub(repl, formula)
+
+
 def _safe_name(caption: str) -> str:
     s = caption.lower()
     s = re.sub(r"[^a-z0-9_]+", "_", s)
@@ -143,12 +157,13 @@ def parse_twb(content: bytes) -> list[TwbDatasource]:
             seen_captions.add(display)
 
             formula = info["formula"]
+            tableau_formula = _formula_legible(formula, defs) if formula else None
             try:
                 expression = translate_formula(formula, resolve) if formula else resolve(fn)
             except NoTraducible as exc:
                 # Se guarda la fórmula original; el compilador la rechaza y el
                 # editor la muestra para convertirla a mano.
-                expression = formula
+                expression = tableau_formula
                 pendientes.append({
                     "name": display,
                     "kind": "dimension" if role == "dimension" else "metric",
@@ -161,6 +176,7 @@ def parse_twb(content: bytes) -> list[TwbDatasource]:
                     "expression": expression,
                     "data_type": info["datatype"],
                     "description": "",
+                    "tableau_formula": tableau_formula,
                 })
             elif role == "measure":
                 metrics.append({
@@ -168,6 +184,7 @@ def parse_twb(content: bytes) -> list[TwbDatasource]:
                     "expression": expression,
                     "format": info["fmt"],
                     "description": "",
+                    "tableau_formula": tableau_formula,
                 })
 
         dimensions.sort(key=lambda x: x["name"])

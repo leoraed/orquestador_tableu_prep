@@ -315,3 +315,67 @@ def make_resolver(
         return sql
 
     return resolve
+
+
+# Nombres internos de Tableau: [Calculation_123…] o copias "Ventas (copia)_2231533646353948679"
+_CALC_INTERNO_RE = re.compile(r"^Calculation_\d+$|_\d{10,}$")
+# Columna duplicada renombrada por Tableau: "contacto_id (stagedata_comercial_funnel_ventas)"
+_COL_DE_TABLA_RE = re.compile(r"^(\w+) \((\w+)\)$")
+# `col`, col, `tabla`.`col` — no necesitan paréntesis al insertarse
+_COLUMNA_SIMPLE_RE = re.compile(r"^(`[^`]+`|\w+)(\.(`[^`]+`|\w+))?$")
+
+
+def make_field_resolver(
+    campos: dict[str, dict],
+    es_tableau: Callable[[str], bool],
+) -> Callable[[str], str]:
+    """
+    Resolvedor para convertir desde el editor, donde no está el workbook.
+    Las referencias [X] se buscan por nombre entre los campos del modelo:
+
+    campos:     {nombre: {"expression": ..., "tableau_formula": ...}}
+    es_tableau: indica si una expresión todavía está en sintaxis Tableau.
+
+    - Campo con SQL válido → se inserta su expresión.
+    - Campo todavía en Tableau → se convierte recursivamente.
+    - Nombre interno de Tableau que no está en el modelo → NoTraducible.
+    - Cualquier otro nombre → columna física.
+    """
+    cache: dict[str, str] = {}
+    in_progress: set[str] = set()
+
+    def resolve(ref: str) -> str:
+        parts = _split_ref(ref)
+        if parts[0] == "Parameters":
+            raise NoTraducible(f"parámetro de Tableau ({ref})")
+        if len(parts) == 2:
+            return f"`{parts[0]}`.`{parts[1]}`"
+
+        nombre = parts[0]
+        campo = campos.get(nombre)
+        if campo is None:
+            if _CALC_INTERNO_RE.search(nombre):
+                raise NoTraducible(f"referencia a un cálculo que no está en el modelo ({ref})")
+            m = _COL_DE_TABLA_RE.match(nombre)
+            if m:
+                return f"`{m.group(2)}`.`{m.group(1)}`"
+            return f"`{nombre}`"
+
+        if nombre in cache:
+            return cache[nombre]
+        if nombre in in_progress:
+            raise NoTraducible(f"referencia circular en {ref}")
+        in_progress.add(nombre)
+        try:
+            expr = (campo.get("expression") or "").strip()
+            if expr and not es_tableau(expr):
+                sql = expr if _COLUMNA_SIMPLE_RE.match(expr) else f"({expr})"
+            else:
+                formula = campo.get("tableau_formula") or expr
+                sql = "(" + translate_formula(formula, resolve) + ")"
+        finally:
+            in_progress.discard(nombre)
+        cache[nombre] = sql
+        return sql
+
+    return resolve

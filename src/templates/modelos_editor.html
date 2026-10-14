@@ -1,4 +1,26 @@
 {% extends "base.html" %}
+
+{% block head %}
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/hint/show-hint.min.css">
+<style>
+  .campos-lista { max-height: calc(100vh - 290px); overflow-y: auto; }
+  .campo-item { cursor: pointer; border-left: 3px solid transparent; }
+  .campo-item:hover { background: #f1f4fa; }
+  .campo-item.activo { background: #e7eefc; border-left-color: var(--bs-primary); }
+  .campo-item .nombre { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .dot-sql { background: var(--bs-success); }
+  .dot-pendiente { background: transparent; border: 2px solid var(--bs-warning); }
+  .grupo-titulo { font-size: .7rem; letter-spacing: .6px; }
+  .CodeMirror { height: auto; min-height: 140px; border: 1px solid #dee2e6; border-radius: .375rem; font-size: .85rem; }
+  .CodeMirror-scroll { min-height: 140px; }
+  pre.formula { white-space: pre-wrap; font-size: .8rem; max-height: 220px; overflow: auto; }
+  .resultado-valor { font-size: 2rem; font-weight: 600; }
+  kbd.kbd-sm { font-size: .7rem; }
+</style>
+{% endblock %}
+
 {% block content %}
 
 <nav aria-label="breadcrumb" class="mb-3">
@@ -8,21 +30,20 @@
   </ol>
 </nav>
 
-<!-- Header -->
-<div class="card mb-4">
+<!-- Cabecera del modelo -->
+<div class="card mb-3">
   <div class="card-body py-3">
-    <div class="row g-3 align-items-center">
+    <div class="row g-3 align-items-end">
       <div class="col-md-4">
         <label class="form-label small fw-semibold mb-1">Nombre del modelo</label>
-        <input type="text" id="modelName" class="form-control" value="{{ modelo.name }}">
+        <input type="text" id="modelName" class="form-control form-control-sm">
       </div>
       <div class="col-md-6">
         <label class="form-label small fw-semibold mb-1">Descripción</label>
-        <input type="text" id="modelDesc" class="form-control" value="{{ modelo.description or '' }}"
-          placeholder="Descripción del modelo...">
+        <input type="text" id="modelDesc" class="form-control form-control-sm" placeholder="Descripción del modelo...">
       </div>
-      <div class="col-md-2 d-flex gap-2 align-items-end">
-        <button class="btn btn-primary btn-sm w-100" onclick="guardarModelo()">
+      <div class="col-md-2">
+        <button class="btn btn-outline-primary btn-sm w-100" onclick="guardarCabecera()">
           <i class="bi bi-check-lg me-1"></i>Guardar
         </button>
       </div>
@@ -30,61 +51,188 @@
   </div>
 </div>
 
-<!-- Entidades -->
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <h6 class="fw-bold mb-0">Entidades</h6>
-  <button class="btn btn-outline-primary btn-sm" onclick="agregarEntidad()">
-    <i class="bi bi-plus-lg me-1"></i>Agregar entidad
-  </button>
-</div>
+<ul class="nav nav-tabs mb-3">
+  <li class="nav-item">
+    <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tabCampos">
+      <i class="bi bi-list-columns me-1"></i>Campos
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabEntidades">
+      <i class="bi bi-diagram-3 me-1"></i>Entidades y joins
+    </button>
+  </li>
+</ul>
 
-<div id="entidadesContainer"></div>
+<div class="tab-content">
 
-<!-- Toast -->
-<div class="position-fixed bottom-0 end-0 p-3" style="z-index:9999">
-  <div id="toastGuardado" class="toast align-items-center border-0" role="alert">
-    <div class="d-flex">
-      <div class="toast-body" id="toastMsg">Guardado.</div>
-      <button type="button" class="btn-close me-2 m-auto" data-bs-dismiss="toast"></button>
+  <!-- ═══ Campos ═══ -->
+  <div class="tab-pane fade show active" id="tabCampos">
+    <div class="row g-3">
+
+      <!-- Lista -->
+      <div class="col-lg-4">
+        <div class="card">
+          <div class="card-body p-2 border-bottom">
+            <div class="input-group input-group-sm mb-2">
+              <span class="input-group-text"><i class="bi bi-search"></i></span>
+              <input type="text" id="buscar" class="form-control" placeholder="Buscar por nombre, expresión o descripción"
+                oninput="renderLista()">
+            </div>
+            <div class="d-flex gap-2">
+              <select id="filtroTipo" class="form-select form-select-sm" onchange="renderLista()">
+                <option value="">Todos</option>
+                <option value="metric">Métricas</option>
+                <option value="dimension">Dimensiones</option>
+              </select>
+              <select id="filtroEstado" class="form-select form-select-sm" onchange="renderLista()">
+                <option value="">Todo estado</option>
+                <option value="sql">SQL válido</option>
+                <option value="pendiente">Pendientes</option>
+              </select>
+              <div class="dropdown">
+                <button class="btn btn-primary btn-sm dropdown-toggle" data-bs-toggle="dropdown" title="Nuevo campo">
+                  <i class="bi bi-plus-lg"></i>
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end">
+                  <li><a class="dropdown-item" href="#" onclick="nuevoCampo('metric');return false">Nueva métrica</a></li>
+                  <li><a class="dropdown-item" href="#" onclick="nuevoCampo('dimension');return false">Nueva dimensión</a></li>
+                </ul>
+              </div>
+            </div>
+            <div class="small text-muted mt-2" id="contadores"></div>
+          </div>
+          <div class="campos-lista" id="lista"></div>
+        </div>
+      </div>
+
+      <!-- Detalle -->
+      <div class="col-lg-8">
+        <div class="card" id="panelVacio">
+          <div class="card-body text-center text-muted py-5">
+            <i class="bi bi-cursor fs-2 d-block mb-2"></i>
+            Elegí un campo de la lista o creá uno nuevo.
+          </div>
+        </div>
+
+        <div class="card d-none" id="panel">
+          <div class="card-header py-2 d-flex justify-content-between align-items-center">
+            <div class="d-flex align-items-center gap-2">
+              <span class="badge text-bg-light border" id="pTipoBadge"></span>
+              <strong id="pTitulo"></strong>
+              <span id="pEstado"></span>
+              <span class="badge text-bg-warning d-none" id="pDirty">sin guardar</span>
+            </div>
+            <button class="btn btn-sm btn-link text-danger py-0" id="btnEliminar" onclick="eliminarCampo()" title="Eliminar campo">
+              <i class="bi bi-trash"></i>
+            </button>
+          </div>
+          <div class="card-body">
+            <div class="row g-2 mb-3">
+              <div class="col-md-5">
+                <label class="form-label small fw-semibold mb-1">Nombre</label>
+                <input type="text" id="pNombre" class="form-control form-control-sm font-monospace" oninput="marcarDirty()">
+              </div>
+              <div class="col-md-4" id="pEntidadWrap">
+                <label class="form-label small fw-semibold mb-1">Entidad</label>
+                <select id="pEntidad" class="form-select form-select-sm" onchange="marcarDirty()"></select>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label small fw-semibold mb-1" id="pTipoLabel">Tipo</label>
+                <select id="pTipo" class="form-select form-select-sm" onchange="marcarDirty()"></select>
+              </div>
+              <div class="col-12">
+                <label class="form-label small fw-semibold mb-1">Descripción</label>
+                <input type="text" id="pDesc" class="form-control form-control-sm" oninput="marcarDirty()"
+                  placeholder="Qué mide o representa (la usa el LLM para elegir el campo)">
+              </div>
+            </div>
+
+            <div class="d-flex justify-content-between align-items-end mb-1">
+              <label class="form-label small fw-semibold mb-0">Expresión SQL</label>
+              <span class="small text-muted"><kbd class="kbd-sm">Ctrl</kbd>+<kbd class="kbd-sm">Espacio</kbd> autocompletar
+                <span id="columnasInfo"></span></span>
+            </div>
+            <textarea id="pExpr"></textarea>
+            <div class="small text-warning-emphasis mt-1 d-none" id="avisoTableau">
+              <i class="bi bi-exclamation-triangle me-1"></i>La expresión tiene sintaxis de Tableau: el compilador la va a rechazar.
+            </div>
+
+            <!-- Fórmula original -->
+            <details class="mt-3 d-none" id="pOriginalWrap">
+              <summary class="small fw-semibold">Fórmula original de Tableau</summary>
+              <pre class="formula bg-light border rounded p-2 mt-2 mb-2" id="pOriginal"></pre>
+              <button class="btn btn-outline-secondary btn-sm" onclick="convertir()">
+                <i class="bi bi-magic me-1"></i>Convertir automáticamente
+              </button>
+              <div class="small mt-2" id="convertirMsg"></div>
+            </details>
+
+            <!-- Probar -->
+            <div class="border rounded p-2 mt-3 bg-light">
+              <div class="row g-2 align-items-end">
+                <div class="col-md-2">
+                  <label class="form-label small mb-1">Período sobre</label>
+                  <select id="tCampoPeriodo" class="form-select form-select-sm"></select>
+                </div>
+                <div class="col-md-2">
+                  <label class="form-label small mb-1">Desde</label>
+                  <input id="tDesde" class="form-control form-control-sm" placeholder="2026-01">
+                </div>
+                <div class="col-md-2">
+                  <label class="form-label small mb-1">Hasta</label>
+                  <input id="tHasta" class="form-control form-control-sm" placeholder="2026-01">
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label small mb-1">Filtro</label>
+                  <div class="input-group input-group-sm">
+                    <select id="tFiltroCampo" class="form-select"></select>
+                    <input id="tFiltroValor" class="form-control" placeholder="valor">
+                  </div>
+                </div>
+                <div class="col-md-2">
+                  <button class="btn btn-success btn-sm w-100" onclick="probar()" id="btnProbar">
+                    <i class="bi bi-play-fill me-1"></i>Probar
+                  </button>
+                </div>
+                <div class="col-md-5 d-none" id="tMetricaWrap">
+                  <label class="form-label small mb-1">Agregar con la métrica (opcional)</label>
+                  <select id="tMetrica" class="form-select form-select-sm"></select>
+                </div>
+              </div>
+              <div id="resultado" class="mt-2"></div>
+            </div>
+          </div>
+          <div class="card-footer d-flex justify-content-end gap-2 py-2">
+            <span class="small text-muted me-auto align-self-center"><kbd class="kbd-sm">Ctrl</kbd>+<kbd class="kbd-sm">S</kbd> guarda</span>
+            <button class="btn btn-outline-secondary btn-sm" onclick="descartar()">Descartar</button>
+            <button class="btn btn-primary btn-sm" onclick="guardarCampo()"><i class="bi bi-check-lg me-1"></i>Guardar campo</button>
+          </div>
+        </div>
+      </div>
     </div>
+  </div>
+
+  <!-- ═══ Entidades y joins ═══ -->
+  <div class="tab-pane fade" id="tabEntidades">
+    <div class="d-flex justify-content-end mb-2">
+      <button class="btn btn-outline-primary btn-sm" onclick="nuevaEntidad()">
+        <i class="bi bi-plus-lg me-1"></i>Agregar entidad
+      </button>
+    </div>
+    <div id="entidades"></div>
+    <datalist id="tablasSugeridas">
+      {% for t in tablas_catalogo %}<option value="{{ t }}">{% endfor %}
+    </datalist>
   </div>
 </div>
 
-<!-- Modal: agregar entidad -->
-<div class="modal fade" id="modalEntidad" tabindex="-1">
-  <div class="modal-dialog modal-lg">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h6 class="modal-title fw-bold" id="modalEntidadTitulo">Nueva entidad</h6>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body">
-        <div class="row g-3 mb-3">
-          <div class="col-md-5">
-            <label class="form-label small fw-semibold">Nombre de la entidad *</label>
-            <input type="text" id="entNombre" class="form-control" placeholder="ej: Llamadas">
-          </div>
-          <div class="col-md-7">
-            <label class="form-label small fw-semibold">Descripción</label>
-            <input type="text" id="entDesc" class="form-control" placeholder="ej: Llamadas de soporte técnico">
-          </div>
-        </div>
-        <div class="mb-3">
-          <label class="form-label small fw-semibold">Tabla base *</label>
-          <input type="text" id="entTabla" class="form-control font-monospace"
-            placeholder="ej: stagedata_noc_link" list="tablasSugeridas">
-          <datalist id="tablasSugeridas">
-            {% for t in tablas_catalogo %}
-            <option value="{{ t }}">
-            {% endfor %}
-          </datalist>
-          <div class="form-text">Escribí el nombre de la tabla principal de esta entidad.</div>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
-        <button class="btn btn-primary btn-sm" onclick="confirmarEntidad()">Agregar</button>
-      </div>
+<!-- Toast -->
+<div class="position-fixed bottom-0 end-0 p-3" style="z-index:9999">
+  <div id="toast" class="toast align-items-center border-0" role="alert">
+    <div class="d-flex">
+      <div class="toast-body" id="toastMsg"></div>
+      <button type="button" class="btn-close me-2 m-auto" data-bs-dismiss="toast"></button>
     </div>
   </div>
 </div>
@@ -92,350 +240,429 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/sql/sql.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/hint/show-hint.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/hint/sql-hint.min.js"></script>
 <script>
-// ── Estado del modelo ──────────────────────────────────────────────────────
-let state = {{ estado_inicial | tojson }};
-let entidadEditandoIdx = null;
+// ── Estado ───────────────────────────────────────────────────────────────────
+const inicial = {{ estado_inicial | tojson }};
+let modeloNombre = inicial.name;
+let entidades = inicial.entities;
+let campos = inicial.campos;
+let actual = null;       // campo abierto en el panel ({...campo} o borrador con id null)
+let dirty = false;
+let cargando = false;    // evita marcar dirty al cargar el editor
 
-// ── Render ─────────────────────────────────────────────────────────────────
-function render() {
-  const c = document.getElementById('entidadesContainer');
-  if (!state.entities.length) {
-    c.innerHTML = `<div class="text-muted text-center p-4 border rounded">
-      <i class="bi bi-box fs-2 d-block mb-2"></i>
-      No hay entidades. Hacé clic en <strong>Agregar entidad</strong>.
-    </div>`;
-    return;
+const TIPOS_DIM = ['string', 'date', 'datetime', 'integer', 'float', 'boolean'];
+const FORMATOS = ['number', 'percent', 'currency'];
+// Igual que es_sintaxis_tableau() en sql_compiler.py (el servidor decide al guardar)
+const TABLEAU_RE = /\[Calculation_\d+\]|\bIF\s+.+THEN|\bIIF\s*\(|\bZN\s*\(|\bATTR\s*\(|\b(FIXED|INCLUDE|EXCLUDE)\s*\{|\bDATEPART\s*\(|\bCOUNTD\s*\(|\b(TODAY|DATETRUNC|DATEADD)\s*\(|\bELSEIF\b|\[[^\]\n']+\]/i;
+
+const api = (path) => `/api/modelos/${encodeURIComponent(modeloNombre)}${path}`;
+const esc = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const clave = (c) => `${c.kind}-${c.id}`;
+
+function toast(msg, ok = true) {
+  const t = document.getElementById('toast');
+  t.classList.toggle('text-bg-success', ok);
+  t.classList.toggle('text-bg-danger', !ok);
+  document.getElementById('toastMsg').textContent = msg;
+  new bootstrap.Toast(t).show();
+}
+
+async function req(method, path, body) {
+  const r = await fetch(api(path), {
+    method, headers: { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  return r.json();
+}
+
+// ── Editor SQL ───────────────────────────────────────────────────────────────
+const editor = CodeMirror.fromTextArea(document.getElementById('pExpr'), {
+  mode: 'text/x-mysql', lineNumbers: true, lineWrapping: true, indentUnit: 2,
+  extraKeys: {
+    'Ctrl-Space': 'autocomplete',
+    'Ctrl-S': () => guardarCampo(), 'Cmd-S': () => guardarCampo(),
+  },
+  hintOptions: { completeSingle: false, tables: {} },
+});
+editor.on('change', () => {
+  document.getElementById('avisoTableau').classList.toggle('d-none', !TABLEAU_RE.test(editor.getValue()));
+  if (!cargando) marcarDirty();
+});
+editor.on('inputRead', (cm, change) => {
+  if (/^[\w.]$/.test(change.text[0] || '')) cm.showHint();
+});
+
+fetch(api('/columnas')).then(r => r.json()).then(d => {
+  const info = document.getElementById('columnasInfo');
+  if (!d.ok) { info.textContent = '· sin columnas del DW'; info.title = d.error; return; }
+  editor.setOption('hintOptions', { completeSingle: false, tables: d.tablas, defaultTable: d.base_table });
+  const n = Object.values(d.tablas).reduce((a, cols) => a + cols.length, 0);
+  info.textContent = `· ${n} columnas del DW`;
+}).catch(() => {});
+
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 's' && actual) { e.preventDefault(); guardarCampo(); }
+});
+window.addEventListener('beforeunload', (e) => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
+
+// ── Lista ────────────────────────────────────────────────────────────────────
+function renderLista() {
+  const q = document.getElementById('buscar').value.trim().toLowerCase();
+  const tipo = document.getElementById('filtroTipo').value;
+  const estado = document.getElementById('filtroEstado').value;
+
+  const visibles = campos.filter(c =>
+    (!tipo || c.kind === tipo) && (!estado || c.estado === estado) &&
+    (!q || [c.name, c.expression, c.description].some(v => (v || '').toLowerCase().includes(q))));
+
+  const grupo = (kind, titulo) => {
+    const items = visibles.filter(c => c.kind === kind).sort((a, b) => a.name.localeCompare(b.name));
+    if (!items.length) return '';
+    return `<div class="px-3 pt-2 pb-1 text-muted text-uppercase fw-semibold grupo-titulo">${titulo} (${items.length})</div>` +
+      items.map(c => `
+        <div class="campo-item d-flex align-items-center gap-2 px-3 py-1 ${actual && actual.id === c.id && actual.kind === c.kind ? 'activo' : ''}"
+             onclick="abrirCampo('${c.kind}', ${c.id})" title="${esc(c.estado === 'pendiente' ? 'Pendiente: sintaxis Tableau' : 'SQL válido')}">
+          <span class="dot dot-${c.estado}"></span>
+          <span class="nombre small">${esc(c.name)}</span>
+        </div>`).join('');
+  };
+  const html = grupo('metric', 'Métricas') + grupo('dimension', 'Dimensiones');
+  document.getElementById('lista').innerHTML = html ||
+    '<div class="text-muted small text-center p-4">No hay campos que coincidan.</div>';
+
+  const pend = campos.filter(c => c.estado === 'pendiente').length;
+  document.getElementById('contadores').innerHTML =
+    `<span class="dot dot-sql me-1"></span>${campos.length - pend} SQL
+     <span class="dot dot-pendiente ms-3 me-1"></span>${pend} pendientes
+     <span class="ms-3">· mostrando ${visibles.length}</span>`;
+}
+
+// ── Panel de detalle ─────────────────────────────────────────────────────────
+function confirmarDescartar() {
+  return !dirty || confirm('Hay cambios sin guardar en este campo. ¿Descartarlos?');
+}
+
+function abrirCampo(kind, id) {
+  if (actual && actual.kind === kind && actual.id === id) return;
+  if (!confirmarDescartar()) return;
+  const c = campos.find(x => x.kind === kind && x.id === id);
+  if (!c) return;
+  cargarPanel({ ...c });
+  history.replaceState(null, '', `#${clave(c)}`);
+}
+
+function nuevoCampo(kind) {
+  if (!confirmarDescartar()) return;
+  cargarPanel({
+    id: null, kind, entity_id: entidades[0]?.id, name: '', expression: '', description: '',
+    data_type: 'string', format: 'number', tableau_formula: null, estado: 'sql',
+  });
+  history.replaceState(null, '', '#');
+  document.getElementById('pNombre').focus();
+}
+
+function opciones(valores, sel) {
+  const vals = valores.includes(sel) || !sel ? valores : [...valores, sel];
+  return vals.map(v => `<option value="${esc(v)}"${v === sel ? ' selected' : ''}>${esc(v)}</option>`).join('');
+}
+
+function cargarPanel(c) {
+  if (!entidades.length) { toast('Primero creá una entidad en la pestaña «Entidades y joins».', false); return; }
+  cargando = true;
+  actual = c;
+  const esMet = c.kind === 'metric';
+  document.getElementById('panelVacio').classList.add('d-none');
+  document.getElementById('panel').classList.remove('d-none');
+  document.getElementById('pTipoBadge').textContent = esMet ? 'Métrica' : 'Dimensión';
+  document.getElementById('pTitulo').textContent = c.id ? c.name : (esMet ? 'Nueva métrica' : 'Nueva dimensión');
+  document.getElementById('pEstado').innerHTML = !c.id ? '' : c.estado === 'sql'
+    ? '<span class="badge text-bg-success">SQL válido</span>'
+    : '<span class="badge text-bg-warning">Pendiente</span>';
+  document.getElementById('btnEliminar').classList.toggle('d-none', !c.id);
+
+  document.getElementById('pNombre').value = c.name;
+  document.getElementById('pDesc').value = c.description || '';
+  document.getElementById('pEntidad').innerHTML = entidades.map(e =>
+    `<option value="${e.id}"${e.id === c.entity_id ? ' selected' : ''}>${esc(e.name)}</option>`).join('');
+  // Mover un campo de entidad no está soportado: solo se elige al crear
+  document.getElementById('pEntidadWrap').classList.toggle('d-none', entidades.length < 2);
+  document.getElementById('pEntidad').disabled = !!c.id;
+  document.getElementById('pTipoLabel').textContent = esMet ? 'Formato' : 'Tipo de dato';
+  document.getElementById('pTipo').innerHTML = esMet ? opciones(FORMATOS, c.format || 'number')
+                                                     : opciones(TIPOS_DIM, c.data_type || 'string');
+
+  editor.setValue(c.expression || '');
+  editor.clearHistory();
+  setTimeout(() => editor.refresh(), 0);
+
+  const orig = c.tableau_formula;
+  document.getElementById('pOriginalWrap').classList.toggle('d-none', !orig);
+  document.getElementById('pOriginal').textContent = orig || '';
+  document.getElementById('pOriginalWrap').open = c.estado === 'pendiente';
+  document.getElementById('convertirMsg').innerHTML = '';
+
+  document.getElementById('tMetricaWrap').classList.toggle('d-none', esMet);
+  document.getElementById('resultado').innerHTML = '';
+  setDirty(false);
+  cargando = false;
+  renderLista();
+}
+
+function setDirty(v) {
+  dirty = v;
+  document.getElementById('pDirty').classList.toggle('d-none', !v);
+}
+function marcarDirty() { if (actual && !cargando) setDirty(true); }
+
+function leerPanel() {
+  const esMet = actual.kind === 'metric';
+  return {
+    kind: actual.kind,
+    entity_id: Number(document.getElementById('pEntidad').value) || actual.entity_id,
+    name: document.getElementById('pNombre').value.trim(),
+    expression: editor.getValue().trim(),
+    description: document.getElementById('pDesc').value.trim(),
+    data_type: esMet ? null : document.getElementById('pTipo').value,
+    format: esMet ? document.getElementById('pTipo').value : null,
+  };
+}
+
+async function guardarCampo() {
+  if (!actual) return;
+  const datos = leerPanel();
+  const d = actual.id
+    ? await req('PUT', `/campos/${actual.kind}/${actual.id}`, datos)
+    : await req('POST', '/campos', datos);
+  if (!d.ok) { toast(d.error, false); return; }
+  const i = campos.findIndex(c => c.kind === d.campo.kind && c.id === d.campo.id);
+  if (i >= 0) campos[i] = d.campo; else campos.push(d.campo);
+  setDirty(false);
+  cargarPanel({ ...d.campo });
+  history.replaceState(null, '', `#${clave(d.campo)}`);
+  toast(`«${d.campo.name}» guardado.`);
+}
+
+function descartar() {
+  if (!actual) return;
+  if (!actual.id) { cerrarPanel(); return; }
+  const c = campos.find(x => x.kind === actual.kind && x.id === actual.id);
+  setDirty(false);
+  cargarPanel({ ...c });
+}
+
+function cerrarPanel() {
+  actual = null;
+  setDirty(false);
+  document.getElementById('panel').classList.add('d-none');
+  document.getElementById('panelVacio').classList.remove('d-none');
+  history.replaceState(null, '', '#');
+  renderLista();
+}
+
+async function eliminarCampo() {
+  if (!actual?.id || !confirm(`¿Eliminar «${actual.name}»? No se puede deshacer.`)) return;
+  const d = await req('DELETE', `/campos/${actual.kind}/${actual.id}`);
+  if (!d.ok) { toast(d.error, false); return; }
+  campos = campos.filter(c => !(c.kind === actual.kind && c.id === actual.id));
+  toast(`«${actual.name}» eliminado.`);
+  cerrarPanel();
+}
+
+// ── Convertir ────────────────────────────────────────────────────────────────
+async function convertir() {
+  const msg = document.getElementById('convertirMsg');
+  msg.innerHTML = '<span class="text-muted">Convirtiendo…</span>';
+  const d = await req('POST', '/convertir', {
+    formula: actual.tableau_formula, kind: actual.kind, name: actual.name,
+  });
+  if (!d.ok) { msg.innerHTML = `<span class="text-danger">${esc(d.error)}</span>`; return; }
+  editor.setValue(d.sql);
+  msg.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Convertida. Probala antes de guardar.</span>';
+}
+
+// ── Probar ───────────────────────────────────────────────────────────────────
+const PREF_KEY = `modelo-prueba:${inicial.name}`;
+
+function initProbar() {
+  const dims = campos.filter(c => c.kind === 'dimension');
+  const fechas = dims.filter(c => ['date', 'datetime'].includes(c.data_type));
+  const pref = JSON.parse(localStorage.getItem(PREF_KEY) || '{}');
+  const periodoDef = pref.campo ?? (fechas.find(c => c.name === 'Fecha') || fechas[0])?.name ?? '';
+
+  document.getElementById('tCampoPeriodo').innerHTML = '<option value="">(sin período)</option>' +
+    fechas.map(c => `<option${c.name === periodoDef ? ' selected' : ''}>${esc(c.name)}</option>`).join('');
+  document.getElementById('tFiltroCampo').innerHTML = '<option value="">(sin filtro)</option>' +
+    dims.filter(c => c.estado === 'sql').map(c =>
+      `<option${c.name === pref.filtroCampo ? ' selected' : ''}>${esc(c.name)}</option>`).join('');
+  document.getElementById('tMetrica').innerHTML = '<option value="">(solo valores de la dimensión)</option>' +
+    campos.filter(c => c.kind === 'metric' && c.estado === 'sql').map(c =>
+      `<option${c.name === pref.metrica ? ' selected' : ''}>${esc(c.name)}</option>`).join('');
+  document.getElementById('tDesde').value = pref.desde || '';
+  document.getElementById('tHasta').value = pref.hasta || '';
+  document.getElementById('tFiltroValor').value = pref.filtroValor || '';
+}
+
+function fmtValor(v, formato) {
+  if (v === null || v === undefined) return '—';
+  if (typeof v === 'number' && formato === 'percent') return (v * 100).toFixed(1) + ' %';
+  if (typeof v === 'number') return v.toLocaleString('es-AR', { maximumFractionDigits: 2 });
+  return String(v);
+}
+
+async function probar() {
+  const pref = {
+    campo: document.getElementById('tCampoPeriodo').value,
+    desde: document.getElementById('tDesde').value.trim(),
+    hasta: document.getElementById('tHasta').value.trim(),
+    filtroCampo: document.getElementById('tFiltroCampo').value,
+    filtroValor: document.getElementById('tFiltroValor').value.trim(),
+    metrica: document.getElementById('tMetrica').value,
+  };
+  localStorage.setItem(PREF_KEY, JSON.stringify(pref));
+
+  const datos = leerPanel();
+  const out = document.getElementById('resultado');
+  const btn = document.getElementById('btnProbar');
+  btn.disabled = true;
+  out.innerHTML = '<div class="small text-muted">Ejecutando…</div>';
+  try {
+    const d = await req('POST', '/probar', {
+      kind: datos.kind, name: datos.name, expression: datos.expression, data_type: datos.data_type,
+      periodo: pref.campo ? { campo: pref.campo, desde: pref.desde || null, hasta: pref.hasta || null } : null,
+      filtros: pref.filtroCampo ? { [pref.filtroCampo]: pref.filtroValor } : {},
+      metrica: datos.kind === 'dimension' ? pref.metrica || null : null,
+    });
+    const sql = d.sql ? `<details class="mt-2"><summary class="small">SQL generado</summary>
+      <pre class="formula bg-white border rounded p-2 mt-1 mb-0">${esc(d.sql)}</pre></details>` : '';
+    if (!d.ok) {
+      out.innerHTML = `<div class="alert alert-danger py-2 small mb-0 mt-2" style="white-space:pre-wrap">${esc(d.error)}</div>${sql}`;
+      return;
+    }
+    let cuerpo;
+    if (datos.kind === 'metric') {
+      cuerpo = `<div class="resultado-valor">${esc(fmtValor(d.filas[0]?.[0], datos.format))}</div>`;
+    } else {
+      cuerpo = `<table class="table table-sm table-bordered bg-white small mb-0 mt-2">
+        <thead><tr>${d.columnas.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead>
+        <tbody>${d.filas.map(f => `<tr>${f.map(v => `<td>${esc(fmtValor(v))}</td>`).join('')}</tr>`).join('')}</tbody>
+      </table>${d.total >= 20 ? '<div class="small text-muted">Primeras 20 filas.</div>' : ''}`;
+    }
+    out.innerHTML = `${cuerpo}<div class="small text-muted">${d.tiempo_ms} ms</div>${sql}`;
+  } catch (e) {
+    out.innerHTML = `<div class="alert alert-danger py-2 small mb-0 mt-2">${esc(e)}</div>`;
+  } finally {
+    btn.disabled = false;
   }
-  c.innerHTML = state.entities.map((e, i) => renderEntidad(e, i)).join('');
 }
 
-function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+// ── Cabecera ─────────────────────────────────────────────────────────────────
+document.getElementById('modelName').value = inicial.name;
+document.getElementById('modelDesc').value = inicial.description;
 
-function renderEntidad(e, i) {
-  const joins = (e.joins || []).map((j, ji) => `
-    <tr>
-      <td style="min-width:160px">
-        <input class="form-control form-control-sm font-monospace" value="${esc(j.table)}"
-          list="tablasSugeridas"
-          onchange="editJoin(${i},${ji},'table',this.value)">
-      </td>
-      <td style="min-width:100px">
-        <input class="form-control form-control-sm" value="${esc(j.alias||'')}"
-          placeholder="${esc(j.table)}"
-          onchange="editJoin(${i},${ji},'alias',this.value)">
-      </td>
-      <td style="min-width:220px">
-        <input class="form-control form-control-sm font-monospace" value="${esc(j.on||'')}"
-          placeholder="t1.campo = t2.campo"
-          onchange="editJoin(${i},${ji},'on',this.value)">
-      </td>
-      <td style="min-width:90px">
-        <select class="form-select form-select-sm" onchange="editJoin(${i},${ji},'type',this.value)">
-          ${['LEFT','INNER','RIGHT'].map(t=>`<option value="${t}"${(j.type||'LEFT').toUpperCase()===t?' selected':''}>${t}</option>`).join('')}
-        </select>
-      </td>
-      <td><button class="btn btn-sm btn-link text-danger p-0" onclick="eliminarJoin(${i},${ji})"><i class="bi bi-x-lg"></i></button></td>
-    </tr>`).join('');
-
-  const dims = (e.dimensions || []).map((d, di) => `
-    <tr>
-      <td style="min-width:140px">
-        <input class="form-control form-control-sm font-monospace" value="${esc(d.name)}"
-          onchange="editDimension(${i},${di},'name',this.value)">
-      </td>
-      <td style="min-width:260px">
-        <input class="form-control form-control-sm font-monospace" value="${esc(d.expression)}"
-          onchange="editDimension(${i},${di},'expression',this.value)">
-      </td>
-      <td style="min-width:100px">
-        <select class="form-select form-select-sm" onchange="editDimension(${i},${di},'data_type',this.value)">
-          ${['string','date','integer','float','boolean'].map(t=>`<option value="${t}"${(d.data_type||'string')===t?' selected':''}>${t}</option>`).join('')}
-        </select>
-      </td>
-      <td style="min-width:160px">
-        <input class="form-control form-control-sm" value="${esc(d.description||'')}" placeholder="—"
-          onchange="editDimension(${i},${di},'description',this.value)">
-      </td>
-      <td><button class="btn btn-sm btn-link text-danger p-0" onclick="eliminarDimension(${i},${di})"><i class="bi bi-x-lg"></i></button></td>
-    </tr>`).join('');
-
-  const mets = (e.metrics || []).map((m, mi) => `
-    <tr>
-      <td style="min-width:140px">
-        <input class="form-control form-control-sm font-monospace" value="${esc(m.name)}"
-          onchange="editMetrica(${i},${mi},'name',this.value)">
-      </td>
-      <td style="min-width:280px">
-        <input class="form-control form-control-sm font-monospace" value="${esc(m.expression)}"
-          onchange="editMetrica(${i},${mi},'expression',this.value)">
-      </td>
-      <td style="min-width:110px">
-        <select class="form-select form-select-sm" onchange="editMetrica(${i},${mi},'format',this.value)">
-          ${['number','percent','currency'].map(t=>`<option value="${t}"${(m.format||'number')===t?' selected':''}>${t}</option>`).join('')}
-        </select>
-      </td>
-      <td style="min-width:160px">
-        <input class="form-control form-control-sm" value="${esc(m.description||'')}" placeholder="—"
-          onchange="editMetrica(${i},${mi},'description',this.value)">
-      </td>
-      <td><button class="btn btn-sm btn-link text-danger p-0" onclick="eliminarMetrica(${i},${mi})"><i class="bi bi-x-lg"></i></button></td>
-    </tr>`).join('');
-
-  return `
-  <div class="card mb-3">
-    <div class="card-header py-2 d-flex justify-content-between align-items-center">
-      <div>
-        <i class="bi bi-box me-2 text-primary"></i>
-        <strong>${e.name}</strong>
-        <span class="text-muted small ms-2">→ <code>${e.base_table}</code></span>
-        ${e.description ? `<span class="text-muted small ms-2">· ${e.description}</span>` : ''}
-      </div>
-      <button class="btn btn-sm btn-link text-danger py-0" onclick="eliminarEntidad(${i})">
-        <i class="bi bi-trash"></i>
-      </button>
-    </div>
-    <div class="card-body p-3">
-
-      <!-- Joins -->
-      <div class="mb-3">
-        <div class="d-flex justify-content-between align-items-center mb-2">
-          <span class="small fw-semibold text-muted text-uppercase" style="letter-spacing:.5px">Joins</span>
-          <button class="btn btn-outline-secondary btn-sm py-0" onclick="mostrarFormJoin(${i})">
-            <i class="bi bi-plus-lg me-1"></i>Agregar join
-          </button>
-        </div>
-        ${e.joins && e.joins.length ? `
-        <div class="table-responsive">
-        <table class="table table-sm mb-0 align-middle">
-          <thead><tr><th>Tabla</th><th>Alias</th><th>ON (condición)</th><th>Tipo</th><th></th></tr></thead>
-          <tbody>${joins}</tbody>
-        </table></div>` : '<div class="text-muted small fst-italic">Sin joins.</div>'}
-        <div id="formJoin-${i}" class="d-none mt-2 p-3 border rounded bg-light">
-          <div class="row g-2">
-            <div class="col-md-4">
-              <input class="form-control form-control-sm font-monospace" id="jTabla-${i}" placeholder="Tabla" list="tablasSugeridas">
-            </div>
-            <div class="col-md-2">
-              <input class="form-control form-control-sm" id="jAlias-${i}" placeholder="Alias">
-            </div>
-            <div class="col-md-4">
-              <input class="form-control form-control-sm font-monospace" id="jOn-${i}" placeholder="ON: t1.campo = t2.campo">
-            </div>
-            <div class="col-md-2">
-              <select class="form-select form-select-sm" id="jTipo-${i}">
-                <option value="left">LEFT</option>
-                <option value="inner">INNER</option>
-                <option value="right">RIGHT</option>
-              </select>
-            </div>
-          </div>
-          <div class="mt-2 d-flex gap-2">
-            <button class="btn btn-sm btn-primary" onclick="agregarJoin(${i})">Agregar</button>
-            <button class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('formJoin-${i}').classList.add('d-none')">Cancelar</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Dimensiones -->
-      <div class="mb-3">
-        <div class="d-flex justify-content-between align-items-center mb-2">
-          <span class="small fw-semibold text-muted text-uppercase" style="letter-spacing:.5px">Dimensiones</span>
-          <button class="btn btn-outline-secondary btn-sm py-0" onclick="mostrarFormDim(${i})">
-            <i class="bi bi-plus-lg me-1"></i>Agregar dimensión
-          </button>
-        </div>
-        ${e.dimensions && e.dimensions.length ? `
-        <table class="table table-sm mb-0">
-          <thead><tr><th>Nombre</th><th>Expresión</th><th>Tipo</th><th>Descripción</th><th></th></tr></thead>
-          <tbody>${dims}</tbody>
-        </table>` : '<div class="text-muted small fst-italic">Sin dimensiones.</div>'}
-        <div id="formDim-${i}" class="d-none mt-2 p-3 border rounded bg-light">
-          <div class="row g-2">
-            <div class="col-md-3">
-              <input class="form-control form-control-sm font-monospace" id="dNombre-${i}" placeholder="nombre_dimension">
-            </div>
-            <div class="col-md-4">
-              <input class="form-control form-control-sm font-monospace" id="dExpr-${i}" placeholder="ej: DATE_FORMAT(fecha,'%Y-%m')">
-            </div>
-            <div class="col-md-2">
-              <select class="form-select form-select-sm" id="dTipo-${i}">
-                <option value="string">string</option>
-                <option value="date">date</option>
-                <option value="integer">integer</option>
-                <option value="float">float</option>
-                <option value="boolean">boolean</option>
-              </select>
-            </div>
-            <div class="col-md-3">
-              <input class="form-control form-control-sm" id="dDesc-${i}" placeholder="Descripción">
-            </div>
-          </div>
-          <div class="mt-2 d-flex gap-2">
-            <button class="btn btn-sm btn-primary" onclick="agregarDimension(${i})">Agregar</button>
-            <button class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('formDim-${i}').classList.add('d-none')">Cancelar</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Métricas -->
-      <div>
-        <div class="d-flex justify-content-between align-items-center mb-2">
-          <span class="small fw-semibold text-muted text-uppercase" style="letter-spacing:.5px">Métricas</span>
-          <button class="btn btn-outline-secondary btn-sm py-0" onclick="mostrarFormMetrica(${i})">
-            <i class="bi bi-plus-lg me-1"></i>Agregar métrica
-          </button>
-        </div>
-        ${e.metrics && e.metrics.length ? `
-        <table class="table table-sm mb-0">
-          <thead><tr><th>Nombre</th><th>Expresión</th><th>Formato</th><th>Descripción</th><th></th></tr></thead>
-          <tbody>${mets}</tbody>
-        </table>` : '<div class="text-muted small fst-italic">Sin métricas.</div>'}
-        <div id="formMet-${i}" class="d-none mt-2 p-3 border rounded bg-light">
-          <div class="row g-2">
-            <div class="col-md-3">
-              <input class="form-control form-control-sm font-monospace" id="mNombre-${i}" placeholder="nombre_metrica">
-            </div>
-            <div class="col-md-5">
-              <input class="form-control form-control-sm font-monospace" id="mExpr-${i}" placeholder="ej: COUNT(*) o SUM(monto)">
-            </div>
-            <div class="col-md-2">
-              <select class="form-select form-select-sm" id="mFormato-${i}">
-                <option value="number">number</option>
-                <option value="percent">percent</option>
-                <option value="currency">currency</option>
-              </select>
-            </div>
-            <div class="col-md-2">
-              <input class="form-control form-control-sm" id="mDesc-${i}" placeholder="Descripción">
-            </div>
-          </div>
-          <div class="mt-2 d-flex gap-2">
-            <button class="btn btn-sm btn-primary" onclick="agregarMetrica(${i})">Agregar</button>
-            <button class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('formMet-${i}').classList.add('d-none')">Cancelar</button>
-          </div>
-        </div>
-      </div>
-
-    </div>
-  </div>`;
-}
-
-// ── Entidades ──────────────────────────────────────────────────────────────
-function agregarEntidad() {
-  entidadEditandoIdx = null;
-  document.getElementById('entNombre').value = '';
-  document.getElementById('entDesc').value = '';
-  document.getElementById('entTabla').value = '';
-  document.getElementById('modalEntidadTitulo').textContent = 'Nueva entidad';
-  new bootstrap.Modal(document.getElementById('modalEntidad')).show();
-}
-
-function confirmarEntidad() {
-  const name = document.getElementById('entNombre').value.trim();
-  const desc = document.getElementById('entDesc').value.trim();
-  const tabla = document.getElementById('entTabla').value.trim();
-  if (!name || !tabla) { alert('Nombre y tabla base son obligatorios.'); return; }
-  state.entities.push({ name, description: desc, base_table: tabla, joins: [], dimensions: [], metrics: [] });
-  bootstrap.Modal.getInstance(document.getElementById('modalEntidad')).hide();
-  render();
-}
-
-function eliminarEntidad(i) {
-  if (!confirm(`¿Eliminar la entidad "${state.entities[i].name}"?`)) return;
-  state.entities.splice(i, 1);
-  render();
-}
-
-// ── Joins ──────────────────────────────────────────────────────────────────
-function mostrarFormJoin(i) { document.getElementById(`formJoin-${i}`).classList.remove('d-none'); }
-
-function agregarJoin(i) {
-  const tabla = document.getElementById(`jTabla-${i}`).value.trim();
-  const alias = document.getElementById(`jAlias-${i}`).value.trim();
-  const on = document.getElementById(`jOn-${i}`).value.trim();
-  const tipo = document.getElementById(`jTipo-${i}`).value;
-  if (!tabla) { alert('La tabla es obligatoria.'); return; }
-  state.entities[i].joins = state.entities[i].joins || [];
-  state.entities[i].joins.push({ table: tabla, alias: alias || tabla, on: on || '', type: tipo.toUpperCase() });
-  render();
-}
-
-function editJoin(i, ji, field, value) {
-  state.entities[i].joins[ji][field] = value;
-}
-
-function eliminarJoin(i, ji) { state.entities[i].joins.splice(ji, 1); render(); }
-
-// ── Dimensiones ────────────────────────────────────────────────────────────
-function mostrarFormDim(i) { document.getElementById(`formDim-${i}`).classList.remove('d-none'); }
-
-function agregarDimension(i) {
-  const name = document.getElementById(`dNombre-${i}`).value.trim();
-  const expr = document.getElementById(`dExpr-${i}`).value.trim();
-  const tipo = document.getElementById(`dTipo-${i}`).value;
-  const desc = document.getElementById(`dDesc-${i}`).value.trim();
-  if (!name || !expr) { alert('Nombre y expresión son obligatorios.'); return; }
-  state.entities[i].dimensions = state.entities[i].dimensions || [];
-  state.entities[i].dimensions.push({ name, expression: expr, data_type: tipo, description: desc });
-  render();
-}
-
-function editDimension(i, di, field, value) {
-  state.entities[i].dimensions[di][field] = value;
-}
-
-function eliminarDimension(i, di) { state.entities[i].dimensions.splice(di, 1); render(); }
-
-// ── Métricas ───────────────────────────────────────────────────────────────
-function mostrarFormMetrica(i) { document.getElementById(`formMet-${i}`).classList.remove('d-none'); }
-
-function agregarMetrica(i) {
-  const name = document.getElementById(`mNombre-${i}`).value.trim();
-  const expr = document.getElementById(`mExpr-${i}`).value.trim();
-  const fmt = document.getElementById(`mFormato-${i}`).value;
-  const desc = document.getElementById(`mDesc-${i}`).value.trim();
-  if (!name || !expr) { alert('Nombre y expresión son obligatorios.'); return; }
-  state.entities[i].metrics = state.entities[i].metrics || [];
-  state.entities[i].metrics.push({ name, expression: expr, format: fmt, description: desc });
-  render();
-}
-
-function editMetrica(i, mi, field, value) {
-  state.entities[i].metrics[mi][field] = value;
-}
-
-function eliminarMetrica(i, mi) { state.entities[i].metrics.splice(mi, 1); render(); }
-
-// ── Guardar ────────────────────────────────────────────────────────────────
-function guardarModelo() {
-  const payload = {
+async function guardarCabecera() {
+  const d = await req('PUT', '', {
     name: document.getElementById('modelName').value.trim(),
     description: document.getElementById('modelDesc').value.trim(),
-    entities: state.entities,
-  };
-  fetch(`/api/modelos/{{ modelo.name }}/editar`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  }).then(r => r.json()).then(data => {
-    const toast = document.getElementById('toastGuardado');
-    if (data.ok) {
-      toast.classList.remove('text-bg-danger');
-      toast.classList.add('text-bg-success');
-      document.getElementById('toastMsg').textContent = 'Modelo guardado correctamente.';
-      state = data.modelo;
-      render();
-    } else {
-      toast.classList.remove('text-bg-success');
-      toast.classList.add('text-bg-danger');
-      document.getElementById('toastMsg').textContent = 'Error: ' + data.error;
-    }
-    new bootstrap.Toast(toast).show();
   });
+  if (!d.ok) { toast(d.error, false); return; }
+  if (d.name !== modeloNombre) {
+    if (dirty) { toast('Modelo renombrado. Guardá el campo abierto antes de recargar.'); modeloNombre = d.name; return; }
+    location.href = `/modelos/${encodeURIComponent(d.name)}${location.hash}`;
+    return;
+  }
+  toast('Modelo guardado.');
 }
 
-// ── Init ───────────────────────────────────────────────────────────────────
-render();
+// ── Entidades y joins ────────────────────────────────────────────────────────
+function renderEntidades() {
+  const c = document.getElementById('entidades');
+  if (!entidades.length) {
+    c.innerHTML = `<div class="text-muted text-center p-4 border rounded bg-white">
+      <i class="bi bi-box fs-2 d-block mb-2"></i>No hay entidades. Hacé clic en <strong>Agregar entidad</strong>.</div>`;
+    return;
+  }
+  c.innerHTML = entidades.map((e, i) => `
+  <div class="card mb-3">
+    <div class="card-body">
+      <div class="row g-2 mb-3">
+        <div class="col-md-3">
+          <label class="form-label small fw-semibold mb-1">Nombre *</label>
+          <input class="form-control form-control-sm" value="${esc(e.name)}" onchange="entidades[${i}].name=this.value">
+        </div>
+        <div class="col-md-4">
+          <label class="form-label small fw-semibold mb-1">Tabla base *</label>
+          <input class="form-control form-control-sm font-monospace" list="tablasSugeridas" value="${esc(e.base_table)}"
+            onchange="entidades[${i}].base_table=this.value">
+        </div>
+        <div class="col-md-5">
+          <label class="form-label small fw-semibold mb-1">Descripción</label>
+          <input class="form-control form-control-sm" value="${esc(e.description)}" onchange="entidades[${i}].description=this.value">
+        </div>
+      </div>
+      <div class="small fw-semibold text-muted text-uppercase mb-1 grupo-titulo">Joins</div>
+      <table class="table table-sm align-middle mb-2">
+        <thead><tr class="small"><th>Tabla</th><th>Alias</th><th>ON</th><th style="width:110px">Tipo</th><th></th></tr></thead>
+        <tbody>
+          ${(e.joins || []).map((j, ji) => `<tr>
+            <td><input class="form-control form-control-sm font-monospace" list="tablasSugeridas" value="${esc(j.table)}" onchange="entidades[${i}].joins[${ji}].table=this.value"></td>
+            <td><input class="form-control form-control-sm" value="${esc(j.alias)}" onchange="entidades[${i}].joins[${ji}].alias=this.value"></td>
+            <td><input class="form-control form-control-sm font-monospace ${j.on ? '' : 'is-invalid'}" value="${esc(j.on)}"
+                  placeholder="t1.campo = t2.campo" onchange="entidades[${i}].joins[${ji}].on=this.value"></td>
+            <td><select class="form-select form-select-sm" onchange="entidades[${i}].joins[${ji}].type=this.value">
+                  ${['LEFT', 'INNER', 'RIGHT'].map(t => `<option${(j.type || 'LEFT') === t ? ' selected' : ''}>${t}</option>`).join('')}
+                </select></td>
+            <td><button class="btn btn-sm btn-link text-danger p-0" onclick="entidades[${i}].joins.splice(${ji},1);renderEntidades()"><i class="bi bi-x-lg"></i></button></td>
+          </tr>`).join('') || '<tr><td colspan="5" class="small text-muted fst-italic">Sin joins.</td></tr>'}
+        </tbody>
+      </table>
+      ${(e.joins || []).some(j => !j.on) ? '<div class="small text-danger mb-2"><i class="bi bi-exclamation-triangle me-1"></i>Un join sin condición ON genera un producto cartesiano.</div>' : ''}
+      <div class="d-flex gap-2">
+        <button class="btn btn-outline-secondary btn-sm" onclick="(entidades[${i}].joins=entidades[${i}].joins||[]).push({table:'',alias:'',on:'',type:'LEFT'});renderEntidades()">
+          <i class="bi bi-plus-lg me-1"></i>Join</button>
+        <button class="btn btn-primary btn-sm ms-auto" onclick="guardarEntidad(${i})"><i class="bi bi-check-lg me-1"></i>Guardar entidad</button>
+        <button class="btn btn-outline-danger btn-sm" onclick="eliminarEntidad(${i})"><i class="bi bi-trash"></i></button>
+      </div>
+    </div>
+  </div>`).join('');
+}
+
+function nuevaEntidad() {
+  entidades.push({ id: null, name: '', description: '', base_table: '', joins: [] });
+  renderEntidades();
+}
+
+async function guardarEntidad(i) {
+  const e = entidades[i];
+  const d = e.id ? await req('PUT', `/entidades/${e.id}`, e) : await req('POST', '/entidades', e);
+  if (!d.ok) { toast(d.error, false); return; }
+  entidades[i] = d.entidad;
+  renderEntidades();
+  toast(`Entidad «${d.entidad.name}» guardada.`);
+}
+
+async function eliminarEntidad(i) {
+  const e = entidades[i];
+  if (!e.id) { entidades.splice(i, 1); renderEntidades(); return; }
+  const n = campos.filter(c => c.entity_id === e.id).length;
+  if (!confirm(`¿Eliminar la entidad «${e.name}» y sus ${n} campos? No se puede deshacer.`)) return;
+  const d = await req('DELETE', `/entidades/${e.id}`);
+  if (!d.ok) { toast(d.error, false); return; }
+  entidades.splice(i, 1);
+  campos = campos.filter(c => c.entity_id !== e.id);
+  if (actual && actual.entity_id === e.id) cerrarPanel(); else renderLista();
+  renderEntidades();
+  toast('Entidad eliminada.');
+}
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+initProbar();
+renderEntidades();
+renderLista();
+const [k, id] = location.hash.slice(1).split('-');
+if (k && id) abrirCampo(k, Number(id));
 </script>
 {% endblock %}

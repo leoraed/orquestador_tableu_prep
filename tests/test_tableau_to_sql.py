@@ -173,6 +173,11 @@ def test_parse_twb_traduce_y_reporta_pendientes():
         "COUNT(DISTINCT CASE WHEN `Source`='Mudanzas' AND (`cliente_id`=73) "
         "THEN `id_direccion` END)"
     )
+    # Se guarda la fórmula original con nombres legibles en vez de internos
+    mud = next(m for m in ds.metrics if m["name"] == "Mudanzas")
+    assert mud["tableau_formula"] == (
+        "COUNTD(IF [Source]='Mudanzas' and [cond_OrbithHome] THEN [id_direccion] end)"
+    )
     # Lo no traducible queda con la fórmula original y se reporta
     assert mets["Ventas CM"].startswith("COUNTD(IF [Source]='Ventas'")
     assert ds.pendientes == [

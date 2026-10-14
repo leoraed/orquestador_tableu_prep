@@ -27,12 +27,14 @@ except ModuleNotFoundError:
 
 load_dotenv(Path(__file__).parent / ".env")
 
-from src.catalog.db import SessionCatalog
-from src.catalog.models_semantic import SemanticModel
+from src.catalog.db import SessionCatalog, engine_catalog
+from src.catalog.models_semantic import SemanticModel, migrar_columnas_semanticas
 from src.catalog.sql_compiler import consultar as _consultar, ConsultaError
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
+
+migrar_columnas_semanticas(engine_catalog)
 
 mcp = _MCPClass(
     "orquestador-semantico",
