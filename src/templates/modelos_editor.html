@@ -140,19 +140,45 @@ function renderEntidad(e, i) {
 
   const dims = (e.dimensions || []).map((d, di) => `
     <tr>
-      <td class="font-monospace small fw-semibold">${d.name}</td>
-      <td><code class="small">${d.expression}</code></td>
-      <td><span class="badge bg-light text-dark border">${d.data_type || 'string'}</span></td>
-      <td class="text-muted small">${d.description || '—'}</td>
+      <td style="min-width:140px">
+        <input class="form-control form-control-sm font-monospace" value="${esc(d.name)}"
+          onchange="editDimension(${i},${di},'name',this.value)">
+      </td>
+      <td style="min-width:260px">
+        <input class="form-control form-control-sm font-monospace" value="${esc(d.expression)}"
+          onchange="editDimension(${i},${di},'expression',this.value)">
+      </td>
+      <td style="min-width:100px">
+        <select class="form-select form-select-sm" onchange="editDimension(${i},${di},'data_type',this.value)">
+          ${['string','date','integer','float','boolean'].map(t=>`<option value="${t}"${(d.data_type||'string')===t?' selected':''}>${t}</option>`).join('')}
+        </select>
+      </td>
+      <td style="min-width:160px">
+        <input class="form-control form-control-sm" value="${esc(d.description||'')}" placeholder="—"
+          onchange="editDimension(${i},${di},'description',this.value)">
+      </td>
       <td><button class="btn btn-sm btn-link text-danger p-0" onclick="eliminarDimension(${i},${di})"><i class="bi bi-x-lg"></i></button></td>
     </tr>`).join('');
 
   const mets = (e.metrics || []).map((m, mi) => `
     <tr>
-      <td class="font-monospace small fw-semibold">${m.name}</td>
-      <td><code class="small">${m.expression}</code></td>
-      <td><span class="badge ${m.format === 'percent' ? 'bg-warning text-dark' : m.format === 'currency' ? 'bg-success' : 'bg-primary'}">${m.format || 'number'}</span></td>
-      <td class="text-muted small">${m.description || '—'}</td>
+      <td style="min-width:140px">
+        <input class="form-control form-control-sm font-monospace" value="${esc(m.name)}"
+          onchange="editMetrica(${i},${mi},'name',this.value)">
+      </td>
+      <td style="min-width:280px">
+        <input class="form-control form-control-sm font-monospace" value="${esc(m.expression)}"
+          onchange="editMetrica(${i},${mi},'expression',this.value)">
+      </td>
+      <td style="min-width:110px">
+        <select class="form-select form-select-sm" onchange="editMetrica(${i},${mi},'format',this.value)">
+          ${['number','percent','currency'].map(t=>`<option value="${t}"${(m.format||'number')===t?' selected':''}>${t}</option>`).join('')}
+        </select>
+      </td>
+      <td style="min-width:160px">
+        <input class="form-control form-control-sm" value="${esc(m.description||'')}" placeholder="—"
+          onchange="editMetrica(${i},${mi},'description',this.value)">
+      </td>
       <td><button class="btn btn-sm btn-link text-danger p-0" onclick="eliminarMetrica(${i},${mi})"><i class="bi bi-x-lg"></i></button></td>
     </tr>`).join('');
 
@@ -355,6 +381,10 @@ function agregarDimension(i) {
   render();
 }
 
+function editDimension(i, di, field, value) {
+  state.entities[i].dimensions[di][field] = value;
+}
+
 function eliminarDimension(i, di) { state.entities[i].dimensions.splice(di, 1); render(); }
 
 // ── Métricas ───────────────────────────────────────────────────────────────
@@ -369,6 +399,10 @@ function agregarMetrica(i) {
   state.entities[i].metrics = state.entities[i].metrics || [];
   state.entities[i].metrics.push({ name, expression: expr, format: fmt, description: desc });
   render();
+}
+
+function editMetrica(i, mi, field, value) {
+  state.entities[i].metrics[mi][field] = value;
 }
 
 function eliminarMetrica(i, mi) { state.entities[i].metrics.splice(mi, 1); render(); }
