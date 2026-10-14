@@ -66,7 +66,7 @@ try:
     print(f"{'Mes':<10} {'Ventas':>8} {'Leads':>8} {'% Cierre':>10}")
     print("-" * 40)
     for row in r["filas"]:
-        cierre = f"{float(row[2])*100:.1f}%" if row[2] else "0.0%"
+        cierre = f"{float(row[3])*100:.1f}%" if row[3] else "0.0%"
         print(f"{str(row[0]):<10} {row[1]:>8} {row[2]:>8} {cierre:>10}")
 except ConsultaError as e:
     print("ConsultaError:", e)
