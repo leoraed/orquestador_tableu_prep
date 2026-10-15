@@ -22,6 +22,7 @@ from src.catalog.db import engine_catalog
 from src.catalog import models as catalog_models  # registra modelos del catálogo
 from src.catalog import models_semantic  # registra modelos semánticos
 from src.catalog import models_tableros  # registra tableros publicados
+from src.catalog import models_acceso  # registra usuarios y auditoría del MCP
 from sqlalchemy import text
 
 Base.metadata.create_all(bind=engine)

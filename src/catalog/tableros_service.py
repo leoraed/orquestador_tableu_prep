@@ -57,7 +57,8 @@ def buscar(db: Session, slug: str) -> Tablero | None:
 
 
 def crear(db: Session, titulo: str, html: str, descripcion: str = "", modelo: str = "",
-          tags: str = "", datos_hasta: str = "", nota: str = "Primera versión") -> Tablero:
+          tags: str = "", datos_hasta: str = "", nota: str = "Primera versión",
+          autor: str | None = None) -> Tablero:
     titulo = (titulo or "").strip()
     if not titulo:
         raise TableroError("El título es obligatorio.")
@@ -66,24 +67,31 @@ def crear(db: Session, titulo: str, html: str, descripcion: str = "", modelo: st
     ahora = datetime.utcnow()
     t = Tablero(slug=_slug_unico(db, slugify(titulo)), titulo=titulo,
                 descripcion=(descripcion or "").strip() or None, modelo=(modelo or "").strip() or None,
-                tags=_tags(tags), created_at=ahora, updated_at=ahora)
-    t.versiones.append(TableroVersion(version=1, html=html, datos_hasta=fecha,
+                tags=_tags(tags), autor=autor, created_at=ahora, updated_at=ahora)
+    t.versiones.append(TableroVersion(version=1, html=html, datos_hasta=fecha, autor=autor,
                                       nota=(nota or "").strip()[:500] or None, created_at=ahora))
     db.add(t)
     db.flush()
     return t
 
 
-def nueva_version(db: Session, t: Tablero, html: str, datos_hasta: str = "", nota: str = "") -> Tablero:
+def nueva_version(db: Session, t: Tablero, html: str, datos_hasta: str = "", nota: str = "",
+                  autor: str | None = None) -> Tablero:
     validar_html(html)
     fecha = parse_fecha(datos_hasta)
     ahora = datetime.utcnow()
     t.versiones.append(TableroVersion(version=(t.ultima.version if t.ultima else 0) + 1, html=html,
                                       datos_hasta=fecha, nota=(nota or "").strip()[:500] or None,
-                                      created_at=ahora))
+                                      autor=autor, created_at=ahora))
     t.updated_at = ahora
     db.flush()
     return t
+
+
+def puede_publicar(t: Tablero, usuario: str, es_admin: bool) -> bool:
+    """Por el MCP solo el autor (o un admin) publica versiones nuevas o edita un tablero.
+    Los subidos desde la app (sin autor) solo los modifican admins."""
+    return es_admin or (t.autor is not None and t.autor == usuario)
 
 
 def editar(t: Tablero, titulo: str, descripcion: str = "", modelo: str = "", tags: str = "") -> Tablero:
@@ -103,11 +111,11 @@ def a_dict(t: Tablero) -> dict:
     return {
         "slug": t.slug, "titulo": t.titulo, "descripcion": t.descripcion or "",
         "modelo": t.modelo or "", "tags": [x.strip() for x in (t.tags or "").split(",") if x.strip()],
-        "tipo": t.tipo, "version": u.version if u else 0,
+        "tipo": t.tipo, "version": u.version if u else 0, "autor": t.autor,
         "datos_hasta": u.datos_hasta.isoformat() if u and u.datos_hasta else None,
         "created_at": t.created_at.isoformat() if t.created_at else None,
         "updated_at": t.updated_at.isoformat() if t.updated_at else None,
-        "versiones": [{"version": v.version, "nota": v.nota or "",
+        "versiones": [{"version": v.version, "nota": v.nota or "", "autor": v.autor,
                        "datos_hasta": v.datos_hasta.isoformat() if v.datos_hasta else None,
                        "created_at": v.created_at.isoformat() if v.created_at else None,
                        "bytes": len(v.html.encode("utf-8"))} for v in reversed(t.versiones)],

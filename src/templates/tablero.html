@@ -122,6 +122,7 @@ function render() {
     meta.appendChild(a);
   }
   meta.appendChild(badge(T.tipo === 'vivo' ? 'vivo' : 'foto', T.tipo === 'vivo' ? 'text-bg-success' : 'text-bg-secondary'));
+  meta.appendChild(badge(v.autor ? `publicado por ${v.autor}` : 'subido desde la app', 'text-bg-light border fw-normal'));
   if (v.datos_hasta) meta.appendChild(badge(`datos al ${fecha(v.datos_hasta)}`, 'text-bg-light border'));
   if (version !== T.version) meta.appendChild(badge(`viendo la versión ${version} (la última es la ${T.version})`, 'text-bg-warning'));
   for (const t of T.tags) meta.appendChild(badge('#' + t, 'text-bg-light border fw-normal'));
@@ -129,7 +130,7 @@ function render() {
   const sel = document.getElementById('selVersion'); sel.replaceChildren();
   for (const x of T.versiones) {
     const o = document.createElement('option'); o.value = x.version;
-    o.textContent = `v${x.version} · ${fecha(x.created_at)}${x.nota ? ' · ' + x.nota : ''}`;
+    o.textContent = `v${x.version} · ${fecha(x.created_at)}${x.autor ? ' · ' + x.autor : ''}${x.nota ? ' · ' + x.nota : ''}`;
     o.selected = x.version === version; sel.appendChild(o);
   }
   sel.classList.toggle('d-none', T.versiones.length < 2);

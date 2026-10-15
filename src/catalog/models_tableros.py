@@ -25,6 +25,8 @@ class Tablero(BaseCatalog):
     modelo: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)   # modelo semántico de origen
     tags: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     tipo: Mapped[str] = mapped_column(String(20), default="foto")              # foto | vivo (paso 3)
+    # Usuario MCP que lo creó; None = subido desde la app (sin login todavía)
+    autor: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
@@ -46,6 +48,7 @@ class TableroVersion(BaseCatalog):
     html: Mapped[str] = mapped_column(_HTML, nullable=False)
     datos_hasta: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     nota: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)    # qué cambió en esta versión
+    autor: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     tablero: Mapped["Tablero"] = relationship(back_populates="versiones")

@@ -92,9 +92,17 @@ def migrar_columnas_semanticas(engine) -> None:
         ("semantic_metrics", "tableau_formula", "TEXT NULL"),
         ("semantic_dimensions", "editado", "TINYINT(1) NULL"),
         ("semantic_metrics", "editado", "TINYINT(1) NULL"),
+        ("tableros", "autor", "VARCHAR(255) NULL"),
+        ("tablero_versiones", "autor", "VARCHAR(255) NULL"),
     ]
     with engine.connect() as conn:
         for tabla, columna, ddl in nuevas:
+            tabla_existe = conn.execute(text(
+                "SELECT COUNT(*) FROM information_schema.TABLES "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :t"
+            ), {"t": tabla}).scalar()
+            if not tabla_existe:   # create_all la crea completa
+                continue
             existe = conn.execute(text(
                 "SELECT COUNT(*) FROM information_schema.COLUMNS "
                 "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :t AND COLUMN_NAME = :c"

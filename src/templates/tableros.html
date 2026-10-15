@@ -122,6 +122,8 @@ function tarjeta(t) {
   meta.appendChild(badge(t.tipo === 'vivo' ? 'vivo' : 'foto', t.tipo === 'vivo' ? 'text-bg-success' : 'text-bg-secondary'));
   if (t.datos_hasta) meta.appendChild(badge(`datos al ${fecha(t.datos_hasta)}`, 'text-bg-light border'));
   meta.appendChild(badge(`v${t.version}`, 'text-bg-light border'));
+  const autor = t.versiones[0]?.autor;
+  meta.appendChild(badge(autor ? `por ${autor}` : 'desde la app', 'text-bg-light border fw-normal'));
   const tags = document.createElement('div'); tags.className = 'meta mt-1 text-muted';
   tags.textContent = t.tags.map(x => '#' + x).join(' ');
   body.append(a, desc, meta, tags);

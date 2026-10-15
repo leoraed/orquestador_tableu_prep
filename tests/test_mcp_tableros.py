@@ -22,7 +22,9 @@ def mcp(monkeypatch):
     s.close()
     monkeypatch.setattr(mcp_server, "SessionCatalog", Session)
     monkeypatch.setenv("ORQUESTADOR_URL", "http://10.0.10.44:8000/")
-    return mcp_server
+    marca = mcp_server._usuario_actual.set(mcp_server._acceso.Usuario("Ana", "usuario"))
+    yield mcp_server
+    mcp_server._usuario_actual.reset(marca)
 
 
 def test_publicar_listar_y_obtener(mcp):

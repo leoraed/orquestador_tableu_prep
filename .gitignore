@@ -30,3 +30,6 @@ tmp/
 
 # Configs locales extras
 config/flows_.yaml
+
+# Config local del cliente MCP (contiene el token del usuario)
+.mcp.json
