@@ -15,6 +15,7 @@ Configuración en Claude Desktop (claude_desktop_config.json):
     }
 """
 import logging
+import os
 from pathlib import Path
 
 import uvicorn
@@ -27,14 +28,15 @@ except ModuleNotFoundError:
 
 load_dotenv(Path(__file__).parent / ".env")
 
-from src.catalog.db import SessionCatalog, engine_catalog
+from src.catalog.db import BaseCatalog, SessionCatalog, engine_catalog
+from src.catalog import models as _catalog_models  # noqa: F401  registra tablas del catálogo
 from src.catalog.models_semantic import SemanticModel, migrar_columnas_semanticas
+from src.catalog.models_tableros import Tablero
+from src.catalog import tableros_service as _tableros
 from src.catalog.sql_compiler import consultar as _consultar, ConsultaError
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
-
-migrar_columnas_semanticas(engine_catalog)
 
 mcp = _MCPClass(
     "orquestador-semantico",
@@ -43,7 +45,9 @@ mcp = _MCPClass(
         "Empezá con listar_modelos para ver qué modelos hay, luego usá get_modelo o "
         "buscar_campos para encontrar las métricas y dimensiones relevantes. "
         "Para ejecutar consultas usá consultar(), que compila SQL desde el modelo "
-        "y devuelve filas + SQL auditado. Nunca escribas SQL libre."
+        "y devuelve filas + SQL auditado. Nunca escribas SQL libre. "
+        "Si te piden un dashboard, armalo como un HTML autocontenido con datos de consultar() "
+        "y publicalo con publicar_dashboard (revisá antes listar_dashboards para no duplicar)."
     ),
 )
 
@@ -264,9 +268,122 @@ def consultar(
     return "\n".join(lines)
 
 
+# ── tableros (dashboards) ─────────────────────────────────────────────────────
+
+def _url_tablero(slug: str, version: int | None = None) -> str:
+    base = os.getenv("ORQUESTADOR_URL", "").rstrip("/")
+    return f"{base}/tableros/{slug}" + (f"?version={version}" if version else "")
+
+
+@mcp.tool(description=(
+    "Publica un dashboard HTML en la sección Tableros del orquestador, donde el equipo lo puede "
+    "ver y compartir. Devuelve el link.\n\n"
+    "Requisitos del HTML (se muestra en un iframe aislado del orquestador):\n"
+    "  - Un solo archivo autocontenido, con los datos embebidos (los sacás con consultar()).\n"
+    "  - NO usar localStorage, sessionStorage, cookies ni IndexedDB: están bloqueados.\n"
+    "  - NO llamar a la API del orquestador ni a la del MCP: está bloqueado. Sí se pueden cargar "
+    "librerías desde CDNs públicos, aunque es preferible no depender de ellos.\n"
+    "  - Indicar en el propio tablero la fecha de los datos, la fuente y las salvedades.\n\n"
+    "Antes de crear uno nuevo, usá listar_dashboards: si ya existe un tablero sobre el mismo tema, "
+    "publicá una versión nueva pasando su slug en `actualizar` (las versiones anteriores se conservan).\n\n"
+    "Parámetros:\n"
+    "  titulo      — título visible (obligatorio al crear; al actualizar, si se pasa, reemplaza el actual).\n"
+    "  html        — documento HTML completo.\n"
+    "  descripcion — qué muestra y para quién (1-2 oraciones).\n"
+    "  modelo      — modelo semántico del que salen los datos (nombre exacto).\n"
+    "  tags        — separados por coma, ej: 'noc, operadores, mensual'.\n"
+    "  datos_hasta — fecha del último dato incluido, AAAA-MM-DD.\n"
+    "  actualizar  — slug de un tablero existente para publicar una versión nueva.\n"
+    "  nota        — qué cambió en esta versión (al actualizar)."
+))
+def publicar_dashboard(
+    titulo: str,
+    html: str,
+    descripcion: str = "",
+    modelo: str = "",
+    tags: str = "",
+    datos_hasta: str = "",
+    actualizar: str = "",
+    nota: str = "",
+) -> str:
+    db = SessionCatalog()
+    try:
+        if modelo and not db.query(SemanticModel).filter(SemanticModel.name == modelo).first():
+            return f"Error: el modelo «{modelo}» no existe. Usá listar_modelos para ver los nombres exactos."
+        if actualizar:
+            t = _tableros.buscar(db, actualizar)
+            if not t:
+                return f"Error: no existe un tablero con slug «{actualizar}». Usá listar_dashboards."
+            if titulo or descripcion or modelo or tags:
+                _tableros.editar(t, titulo or t.titulo, descripcion or (t.descripcion or ""),
+                                 modelo or (t.modelo or ""), tags or (t.tags or ""))
+            _tableros.nueva_version(db, t, html, datos_hasta, nota or "Publicado desde Claude")
+            accion = f"Publiqué la versión {t.ultima.version} de «{t.titulo}»"
+        else:
+            t = _tableros.crear(db, titulo, html, descripcion, modelo, tags, datos_hasta,
+                                nota="Publicado desde Claude")
+            accion = f"Publiqué el tablero «{t.titulo}»"
+        db.commit()
+        return f"{accion}.\nLink: {_url_tablero(t.slug)}\nSlug: {t.slug} (usalo en `actualizar` para nuevas versiones)."
+    except _tableros.TableroError as e:
+        db.rollback()
+        return f"Error: {e}"
+    finally:
+        db.close()
+
+
+@mcp.tool(description=(
+    "Lista los tableros publicados en el orquestador (slug, título, modelo, versión y fecha de los "
+    "datos). Opcionalmente filtra por modelo semántico."
+))
+def listar_dashboards(modelo: str = "") -> str:
+    db = SessionCatalog()
+    try:
+        q = db.query(Tablero).order_by(Tablero.updated_at.desc())
+        if modelo:
+            q = q.filter(Tablero.modelo == modelo)
+        tableros = [_tableros.a_dict(t) for t in q.all()]
+    finally:
+        db.close()
+    if not tableros:
+        return "No hay tableros publicados" + (f" del modelo «{modelo}»." if modelo else ".")
+    lines = ["Tableros publicados:\n"]
+    for t in tableros:
+        extra = " · ".join(x for x in [t["modelo"] and f"modelo {t['modelo']}", f"v{t['version']}",
+                                       t["datos_hasta"] and f"datos al {t['datos_hasta']}"] if x)
+        lines.append(f"- **{t['titulo']}** (`{t['slug']}`) — {extra}"
+                     + (f"\n  {t['descripcion']}" if t["descripcion"] else ""))
+    return "\n".join(lines)
+
+
+@mcp.tool(description=(
+    "Devuelve el HTML de un tablero publicado (la última versión, o la indicada) con sus datos, "
+    "para modificarlo y volver a publicarlo con publicar_dashboard(actualizar=slug)."
+))
+def obtener_dashboard(slug: str, version: int = 0) -> str:
+    db = SessionCatalog()
+    try:
+        t = _tableros.buscar(db, slug)
+        if not t:
+            return f"Error: no existe un tablero con slug «{slug}». Usá listar_dashboards."
+        v = next((x for x in t.versiones if x.version == version), None) if version else t.ultima
+        if v is None:
+            return f"Error: el tablero «{slug}» no tiene versión {version}."
+        info = _tableros.a_dict(t)
+        cabecera = (f"Tablero «{t.titulo}» (`{t.slug}`), versión {v.version} de {info['version']}"
+                    + (f", datos al {v.datos_hasta.isoformat()}" if v.datos_hasta else "")
+                    + (f", modelo {t.modelo}" if t.modelo else "") + ".")
+        return f"{cabecera}\n\n```html\n{v.html}\n```"
+    finally:
+        db.close()
+
+
 # ── run ───────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    # Columnas y tablas nuevas del catálogo (por si el MCP arranca antes que main.py)
+    migrar_columnas_semanticas(engine_catalog)
+    BaseCatalog.metadata.create_all(bind=engine_catalog)
     logger.info("Iniciando MCP server en http://0.0.0.0:8001/sse")
     app = mcp.sse_app(host="0.0.0.0")
     uvicorn.run(app, host="0.0.0.0", port=8001)
