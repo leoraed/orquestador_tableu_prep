@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block content %}
+<h5 class="fw-bold mb-3"><i class="bi bi-journal-text me-2 text-primary"></i>Auditoría</h5>
+
+<div class="d-flex gap-2 mb-3 flex-wrap">
+  <select id="fUsuario" class="form-select form-select-sm" style="max-width:240px">
+    <option value="">Todos los usuarios</option>
+    {% for u in usuarios %}<option>{{ u }}</option>{% endfor %}
+  </select>
+  <select id="fOrigen" class="form-select form-select-sm" style="max-width:180px">
+    <option value="">App y MCP</option><option value="app">Solo app</option><option value="mcp">Solo MCP (Claude)</option>
+  </select>
+  <div class="form-check form-switch align-self-center ms-2">
+    <input class="form-check-input" type="checkbox" id="fErrores">
+    <label class="form-check-label small" for="fErrores">Solo errores y rechazos</label>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-sm table-hover mb-0 align-middle">
+      <thead><tr class="small text-muted"><th>Fecha</th><th>Origen</th><th>Usuario</th><th>Acción</th><th>Parámetros</th><th>Resultado</th></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+</div>
+<div class="small text-muted mt-2">Últimos 300 eventos. Las contraseñas y los tokens nunca se registran; del HTML de los tableros solo se guarda el tamaño.</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const fecha = (iso) => new Date(iso + 'Z').toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'medium' });
+function el(tag, cls, texto) { const e = document.createElement(tag); if (cls) e.className = cls; if (texto != null) e.textContent = texto; return e; }
+
+async function cargar() {
+  const q = new URLSearchParams({ usuario: document.getElementById('fUsuario').value, origen: document.getElementById('fOrigen').value,
+                                  solo_errores: document.getElementById('fErrores').checked, limite: 300 });
+  const d = await fetch('/api/auditoria?' + q).then(r => r.json());
+  const tb = document.getElementById('tbody'); tb.replaceChildren();
+  for (const e of d.eventos) {
+    const tr = document.createElement('tr');
+    const td = (n) => { const c = document.createElement('td'); c.append(n); tr.appendChild(c); };
+    td(el('span', 'small text-nowrap', fecha(e.fecha)));
+    td(el('span', `badge ${e.origen === 'mcp' ? 'text-bg-info' : 'text-bg-light border'}`, e.origen === 'mcp' ? 'MCP' : 'app'));
+    td(el('span', 'small', e.usuario));
+    td(el('code', 'small', e.accion));
+    const p = el('span', 'small text-muted', (e.parametros || '').slice(0, 140)); p.title = e.parametros || ''; td(p);
+    td(e.ok ? el('span', 'small text-success', '✓' + (e.duracion_ms != null ? ` ${e.duracion_ms} ms` : ''))
+            : el('span', 'small text-danger', '✗ ' + (e.detalle || '')));
+    tb.appendChild(tr);
+  }
+  if (!d.eventos.length) { const tr = document.createElement('tr'); const c = el('td', 'small text-muted p-3', 'Sin eventos.'); c.colSpan = 6; tr.appendChild(c); tb.appendChild(tr); }
+}
+['fUsuario', 'fOrigen', 'fErrores'].forEach(id => document.getElementById(id).addEventListener('change', cargar));
+cargar();
+</script>
+{% endblock %}

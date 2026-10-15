@@ -9,6 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import src.api as api
+from conftest import iniciar_sesion
 from src.catalog import models as _catalog_models  # noqa: F401  registra tablas del catálogo
 from src.catalog.db import BaseCatalog, get_catalog_db
 from src.catalog.models_semantic import (
@@ -19,7 +20,7 @@ MOD = "/api/modelos/mkt"
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
     engine = create_engine("sqlite://", poolclass=StaticPool,
                            connect_args={"check_same_thread": False})
     BaseCatalog.metadata.create_all(engine)
@@ -53,7 +54,7 @@ def client():
             s.close()
 
     api.app.dependency_overrides[get_catalog_db] = override
-    c = TestClient(api.app)
+    c = iniciar_sesion(TestClient(api.app), Session, monkeypatch)
     c.Session = Session
     yield c
     api.app.dependency_overrides.clear()

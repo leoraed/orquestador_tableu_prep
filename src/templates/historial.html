@@ -61,7 +61,7 @@
                 <i class="bi bi-terminal"></i>
               </button>
               {% if e.estado == 'en_proceso' %}
-              <form action="/api/ejecuciones/{{ e.id }}/cancelar" method="post"
+              <form data-permiso="etl.ejecutar" action="/api/ejecuciones/{{ e.id }}/cancelar" method="post"
                 onsubmit="return confirm('¿Cancelar la ejecución #{{ e.id }}?')">
                 <button class="btn btn-sm btn-outline-danger py-0" title="Cancelar">
                   <i class="bi bi-stop-fill"></i>

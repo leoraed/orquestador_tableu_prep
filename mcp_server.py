@@ -5,7 +5,7 @@ Expone los modelos semánticos como herramientas para Claude.
 Inicio:
     python mcp_server.py
 
-Acceso: cada usuario tiene un token (python -m src.mcp_acceso crear "Nombre").
+Acceso: cada usuario de la app genera su token en /perfil (o un admin desde el servidor).
 Toda conexión debe mandar "Authorization: Bearer <token>"; cada llamada a una
 herramienta queda auditada con el usuario. MCP_AUTH=off la desactiva (solo desarrollo).
 
@@ -49,7 +49,8 @@ from src.catalog.models_tableros import Tablero
 from src.catalog import tableros_service as _tableros
 from src.catalog.sql_compiler import consultar as _consultar, ConsultaError
 from src.catalog import models_acceso as _models_acceso  # noqa: F401  registra tablas de acceso
-from src import mcp_acceso as _acceso
+from src import usuarios as _usuarios
+from src.permisos import HERRAMIENTAS_MCP, PERMISOS, permisos_de
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -57,7 +58,7 @@ logger = logging.getLogger(__name__)
 # ── acceso ───────────────────────────────────────────────────────────────────
 # El usuario se identifica al abrir la conexión SSE; las herramientas corren en
 # tareas hijas de esa conexión y heredan esta variable de contexto.
-_usuario_actual: contextvars.ContextVar[_acceso.Usuario | None] = contextvars.ContextVar(
+_usuario_actual: contextvars.ContextVar[_usuarios.SesionUsuario | None] = contextvars.ContextVar(
     "usuario_mcp", default=None)
 _AUTH_DESACTIVADA = os.getenv("MCP_AUTH", "on").lower() in ("off", "0", "false", "no")
 
@@ -72,7 +73,8 @@ class AutenticacionMiddleware:
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
         if _AUTH_DESACTIVADA:
-            usuario = _acceso.Usuario("anónimo (auth desactivada)", "admin")
+            usuario = _usuarios.SesionUsuario(0, "anonimo", "anónimo (auth desactivada)", ("admin",),
+                                              permisos_de(["admin"]))
         else:
             auth = dict(scope.get("headers") or []).get(b"authorization", b"").decode("latin-1")
             token = auth[7:].strip() if auth[:7].lower() == "bearer " else None
@@ -92,15 +94,15 @@ class AutenticacionMiddleware:
             _usuario_actual.reset(marca)
 
 
-def _verificar(token: str | None) -> _acceso.Usuario | None:
+def _verificar(token: str | None) -> _usuarios.SesionUsuario | None:
     db = SessionCatalog()
     try:
-        return _acceso.verificar_token(db, token)
+        return _usuarios.verificar_token_mcp(db, token)
     finally:
         db.close()
 
 
-def _usuario() -> _acceso.Usuario | None:
+def _usuario() -> _usuarios.SesionUsuario | None:
     return _usuario_actual.get()
 
 
@@ -109,8 +111,10 @@ def _es_error(resultado) -> bool:
 
 
 def auditado(fn):
-    """Registra cada llamada a la herramienta: usuario, parámetros (resumidos), resultado y duración."""
+    """Exige el permiso de la herramienta (permisos.HERRAMIENTAS_MCP) y registra cada llamada:
+    usuario, parámetros (resumidos), resultado y duración."""
     firma = inspect.signature(fn)
+    permiso = HERRAMIENTAS_MCP[fn.__name__]
 
     @functools.wraps(fn)
     def envoltura(*args, **kwargs):
@@ -120,7 +124,11 @@ def auditado(fn):
         t0 = time.time()
         ok, detalle = True, ""
         try:
-            resultado = fn(*args, **kwargs)
+            if u is None or not u.puede(permiso):
+                resultado = (f"Error: tu usuario no tiene permiso para usar {fn.__name__} "
+                             f"({PERMISOS[permiso]}). Pedíselo a un admin del orquestador.")
+            else:
+                resultado = fn(*args, **kwargs)
             if _es_error(resultado):
                 ok, detalle = False, resultado.splitlines()[0]
             return resultado
@@ -130,8 +138,8 @@ def auditado(fn):
         finally:
             db = SessionCatalog()
             try:
-                _acceso.registrar(db, u.nombre if u else "desconocido", fn.__name__, dict(params.arguments),
-                                  ok, detalle, int((time.time() - t0) * 1000))
+                _usuarios.auditar(db, "mcp", u.nombre if u else "desconocido", fn.__name__,
+                                  dict(params.arguments), ok, detalle, int((time.time() - t0) * 1000))
             except Exception:
                 logger.exception("No se pudo registrar la auditoría de %s", fn.__name__)
             finally:
@@ -425,7 +433,7 @@ def publicar_dashboard(
             t = _tableros.buscar(db, actualizar)
             if not t:
                 return f"Error: no existe un tablero con slug «{actualizar}». Usá listar_dashboards."
-            if not _tableros.puede_publicar(t, u.nombre, u.es_admin):
+            if not _tableros.puede_publicar(t, u.nombre, u.puede("tableros.administrar")):
                 duenio = f"es de «{t.autor}»" if t.autor else "se subió desde la app"
                 return (f"Error: el tablero «{t.titulo}» {duenio}; solo su autor o un admin pueden publicarle "
                         f"versiones nuevas. Si querés una variante, publicá un tablero nuevo.")
@@ -502,6 +510,12 @@ if __name__ == "__main__":
     # Tablas y columnas nuevas del catálogo (por si el MCP arranca antes que main.py)
     BaseCatalog.metadata.create_all(bind=engine_catalog)
     migrar_columnas_semanticas(engine_catalog)
+    _db = SessionCatalog()
+    try:
+        _usuarios.migrar_usuarios_mcp(_db)
+        _db.commit()
+    finally:
+        _db.close()
     if _AUTH_DESACTIVADA:
         logger.warning("MCP_AUTH=off: el servidor acepta conexiones SIN token. Usar solo en desarrollo.")
     logger.info("Iniciando MCP server en http://0.0.0.0:8001/sse")

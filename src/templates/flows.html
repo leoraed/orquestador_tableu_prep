@@ -20,7 +20,7 @@
   </div>
   <div id="seccion-carpetas" class="card-body pb-2">
 
-    <form id="formAgregarCarpeta" action="/api/carpetas" method="post"
+    <form data-permiso="etl.configurar" id="formAgregarCarpeta" action="/api/carpetas" method="post"
       class="d-none d-flex gap-2 mb-3">
       <input type="text" name="path" class="form-control form-control-sm font-monospace"
         placeholder="C:\ruta\a\tus\flows" required>
@@ -38,7 +38,7 @@
         <span class="font-monospace small text-muted">
           <i class="bi bi-folder-fill text-warning me-2"></i>{{ carpeta }}
         </span>
-        <form action="/api/carpetas/eliminar" method="post" class="d-inline"
+        <form data-permiso="etl.configurar" action="/api/carpetas/eliminar" method="post" class="d-inline"
           onsubmit="return confirm('¿Quitar esta carpeta de la lista?')">
           <input type="hidden" name="path" value="{{ carpeta }}">
           <button class="btn btn-sm btn-link text-danger p-0" title="Quitar">
@@ -120,7 +120,7 @@
                 <i class="bi bi-check-lg me-1"></i>Registrado
               </span>
             {% else %}
-              <button class="btn btn-sm btn-primary"
+              <button data-permiso="etl.configurar" class="btn btn-sm btn-primary"
                 data-tfl="{{ tfl | tojson | forceescape }}"
                 onclick="programarDescubierto(JSON.parse(this.dataset.tfl))">
                 <i class="bi bi-plus-lg me-1"></i>Registrar
@@ -144,7 +144,7 @@
     style="cursor:pointer" onclick="toggleSeccion('programados')">
     <span><i class="bi bi-list-check me-2 text-primary"></i>Flows registrados</span>
     <div class="d-flex gap-2" onclick="event.stopPropagation()">
-      <button class="btn btn-sm btn-primary py-0" onclick="abrirModalNuevo()">
+      <button data-permiso="etl.configurar" class="btn btn-sm btn-primary py-0" onclick="abrirModalNuevo()">
         <i class="bi bi-plus-lg me-1"></i>Nuevo
       </button>
       <i id="chevron-programados" class="bi bi-chevron-up align-self-center text-muted"></i>
@@ -218,17 +218,17 @@
           </td>
           <td>
             <div class="d-flex gap-1">
-              <form action="/api/flows/{{ flow.name }}/ejecutar" method="post">
+              <form data-permiso="etl.ejecutar" action="/api/flows/{{ flow.name }}/ejecutar" method="post">
                 <button class="btn btn-sm btn-outline-primary" title="Ejecutar ahora (sin pipeline)">
                   <i class="bi bi-play-fill"></i>
                 </button>
               </form>
-              <button class="btn btn-sm btn-outline-secondary" title="Editar"
+              <button data-permiso="etl.configurar" class="btn btn-sm btn-outline-secondary" title="Editar"
                 data-flow="{{ flow | tojson | forceescape }}"
                 onclick="abrirModalEditar(JSON.parse(this.dataset.flow))">
                 <i class="bi bi-pencil"></i>
               </button>
-              <form action="/api/flows/{{ flow.name }}/eliminar" method="post"
+              <form data-permiso="etl.configurar" action="/api/flows/{{ flow.name }}/eliminar" method="post"
                 onsubmit="return confirm('¿Eliminar el flow {{ flow.name }}?')">
                 <button class="btn btn-sm btn-outline-danger" title="Eliminar">
                   <i class="bi bi-trash"></i>

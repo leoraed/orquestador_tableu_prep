@@ -8,6 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import src.api as api
+from conftest import iniciar_sesion
 from src.catalog.db import BaseCatalog, get_catalog_db
 from src.catalog.lineage import capa, construir_indice, norm_tabla
 from src.catalog.models import (
@@ -64,7 +65,7 @@ def test_indice_cruza_outputs_con_fuentes():
 # ── páginas ──────────────────────────────────────────────────────────────────
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
     engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
     BaseCatalog.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
@@ -100,7 +101,7 @@ def client():
             s.close()
 
     api.app.dependency_overrides[get_catalog_db] = override
-    yield TestClient(api.app)
+    yield iniciar_sesion(TestClient(api.app), Session, monkeypatch)
     api.app.dependency_overrides.clear()
 
 

@@ -3,7 +3,7 @@
 
 <div class="d-flex justify-content-between align-items-center mb-4">
   <h5 class="mb-0 fw-bold">Pipelines</h5>
-  <button class="btn btn-primary" onclick="abrirModalNuevo()">
+  <button data-permiso="etl.configurar" class="btn btn-primary" onclick="abrirModalNuevo()">
     <i class="bi bi-plus-lg me-1"></i>Nuevo pipeline
   </button>
 </div>
@@ -49,17 +49,17 @@
                  class="btn btn-sm btn-outline-secondary" title="Ver grafo">
                 <i class="bi bi-diagram-3"></i>
               </a>
-              <form action="/api/pipelines/{{ pipeline.name }}/ejecutar" method="post">
+              <form data-permiso="etl.ejecutar" action="/api/pipelines/{{ pipeline.name }}/ejecutar" method="post">
                 <button class="btn btn-sm btn-outline-primary" title="Ejecutar ahora">
                   <i class="bi bi-play-fill"></i>
                 </button>
               </form>
-              <button class="btn btn-sm btn-outline-secondary" title="Editar"
+              <button data-permiso="etl.configurar" class="btn btn-sm btn-outline-secondary" title="Editar"
                 data-pipeline="{{ pipeline | tojson | forceescape }}"
                 onclick="abrirModalEditar(JSON.parse(this.dataset.pipeline))">
                 <i class="bi bi-pencil"></i>
               </button>
-              <form action="/api/pipelines/{{ pipeline.name }}/eliminar" method="post"
+              <form data-permiso="etl.configurar" action="/api/pipelines/{{ pipeline.name }}/eliminar" method="post"
                 onsubmit="return confirm('¿Eliminar el pipeline {{ pipeline.name }}?')">
                 <button class="btn btn-sm btn-outline-danger" title="Eliminar">
                   <i class="bi bi-trash"></i>

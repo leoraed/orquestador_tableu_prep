@@ -60,7 +60,10 @@
       <span>Tableau Prep<br><small class="fw-normal text-secondary" style="font-size:.7rem">Orquestador</small></span>
     </div>
 
+    {% set U = request.state.usuario if request.state.usuario is defined else none %}
+    {% set P = U.permisos if U else [] %}
     <ul class="nav flex-column gap-1">
+      {% if 'etl.ver' in P %}
       <li><a href="/" class="nav-link {% if active == 'dashboard' %}active{% endif %}">
         <i class="bi bi-speedometer2 me-2"></i>Dashboard
       </a></li>
@@ -82,19 +85,49 @@
       <li><a href="/grafo" class="nav-link {% if active == 'grafo' %}active{% endif %}">
         <i class="bi bi-diagram-3 me-2"></i>Grafo
       </a></li>
+      {% endif %}
+      {% if 'catalogo.ver' in P %}
       <li><a href="/catalogo" class="nav-link {% if active == 'catalogo' %}active{% endif %}">
         <i class="bi bi-database me-2"></i>Catálogo
       </a></li>
+      {% endif %}
+      {% if 'modelos.ver' in P %}
       <li><a href="/modelos" class="nav-link {% if active == 'modelos' %}active{% endif %}">
         <i class="bi bi-layers me-2"></i>Modelos
       </a></li>
+      {% endif %}
+      {% if 'tableros.ver' in P %}
       <li><a href="/tableros" class="nav-link {% if active == 'tableros' %}active{% endif %}">
         <i class="bi bi-easel me-2"></i>Tableros
       </a></li>
+      {% endif %}
+      {% if 'sistema.configuracion' in P %}
       <li><a href="/configuracion" class="nav-link {% if active == 'config' %}active{% endif %}">
         <i class="bi bi-gear me-2"></i>Configuración
       </a></li>
+      {% endif %}
+      {% if 'sistema.usuarios' in P %}
+      <li><a href="/usuarios" class="nav-link {% if active == 'usuarios' %}active{% endif %}">
+        <i class="bi bi-people me-2"></i>Usuarios
+      </a></li>
+      {% endif %}
+      {% if 'sistema.auditoria' in P %}
+      <li><a href="/auditoria" class="nav-link {% if active == 'auditoria' %}active{% endif %}">
+        <i class="bi bi-journal-text me-2"></i>Auditoría
+      </a></li>
+      {% endif %}
     </ul>
+    {% if U %}
+    <div class="mt-auto pt-3 border-top border-secondary-subtle small">
+      <a href="/perfil" class="nav-link px-2 {% if active == 'perfil' %}active{% endif %}" title="Mi perfil">
+        <i class="bi bi-person-circle me-2"></i>{{ U.nombre }}
+        <div class="text-secondary" style="font-size:.7rem;margin-left:1.6rem">{{ U.roles | join(', ') }}</div>
+      </a>
+      <form method="post" action="/logout" class="px-2 mt-1">
+        <button class="btn btn-link nav-link p-0 text-secondary" type="submit"><i class="bi bi-box-arrow-left me-2"></i>Salir</button>
+      </form>
+    </div>
+    {% endif %}
   </nav>
 
   <!-- Main -->
@@ -118,6 +151,13 @@
 
 </div>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+  // Oculta lo que el usuario no puede usar (el servidor igual lo rechaza): data-permiso="etl.ejecutar".
+  // Las pantallas que arman botones con JS usan puede('permiso').
+  window.PERMISOS_USUARIO = {{ (P | list) | tojson }};
+  window.puede = (p) => window.PERMISOS_USUARIO.includes(p);
+  document.querySelectorAll('[data-permiso]').forEach(e => { if (!puede(e.dataset.permiso)) e.remove(); });
+</script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

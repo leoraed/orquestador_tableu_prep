@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h5 class="fw-bold mb-0"><i class="bi bi-people me-2 text-primary"></i>Usuarios</h5>
+  <button class="btn btn-primary btn-sm" onclick="abrir(null)"><i class="bi bi-person-plus me-1"></i>Nuevo usuario</button>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-hover mb-0 align-middle">
+      <thead><tr class="small text-muted">
+        <th>Nombre</th><th>Usuario</th><th>Roles</th><th>Estado</th><th>MCP</th><th>Último ingreso</th><th></th>
+      </tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card mt-3">
+  <div class="card-header py-2 small fw-semibold">Roles</div>
+  <div class="card-body small" id="rolesInfo"></div>
+</div>
+
+<!-- Modal usuario -->
+<div class="modal fade" id="modalUsuario" tabindex="-1">
+  <div class="modal-dialog"><div class="modal-content">
+    <div class="modal-header">
+      <h6 class="modal-title fw-bold" id="mTitulo"></h6>
+      <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+    </div>
+    <div class="modal-body">
+      <label class="form-label small fw-semibold mb-1">Nombre y apellido *</label>
+      <input id="mNombre" class="form-control form-control-sm mb-2" placeholder="Ana Pérez">
+      <label class="form-label small fw-semibold mb-1">Usuario (para ingresar) *</label>
+      <input id="mUsuario" class="form-control form-control-sm mb-2" placeholder="ana.perez">
+      <label class="form-label small fw-semibold mb-1">Roles *</label>
+      <div id="mRoles" class="mb-2"></div>
+      <div class="form-check form-switch" id="mActivoWrap">
+        <input class="form-check-input" type="checkbox" id="mActivo">
+        <label class="form-check-label small" for="mActivo">Activo</label>
+      </div>
+      <div id="mError" class="alert alert-danger small py-1 px-2 mt-2 mb-0 d-none"></div>
+      <div id="mTemporal" class="alert alert-success small py-2 mt-2 mb-0 d-none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cerrar</button>
+      <button class="btn btn-primary btn-sm" id="mGuardar" onclick="guardar()">Guardar</button>
+    </div>
+  </div></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const D = {{ datos | tojson }};
+let editando = null;
+const modal = new bootstrap.Modal(document.getElementById('modalUsuario'));
+const fecha = (iso) => iso ? new Date(iso + 'Z').toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' }) : 'nunca';
+
+function el(tag, cls, texto) { const e = document.createElement(tag); if (cls) e.className = cls; if (texto != null) e.textContent = texto; return e; }
+
+function render() {
+  const tb = document.getElementById('tbody'); tb.replaceChildren();
+  for (const u of D.usuarios) {
+    const tr = document.createElement('tr');
+    const td = (contenido) => { const c = document.createElement('td'); c.append(...[].concat(contenido)); tr.appendChild(c); return c; };
+    td([el('span', 'fw-semibold', u.nombre), ...(u.id === D.yo ? [el('span', 'badge text-bg-light border ms-1', 'vos')] : [])]);
+    td(el('code', 'small', u.usuario));
+    td(u.roles.map(r => el('span', 'badge text-bg-primary me-1', r)));
+    td(!u.activo ? el('span', 'badge text-bg-secondary', 'inactivo')
+       : u.sin_password ? el('span', 'badge text-bg-warning', 'sin contraseña')
+       : u.debe_cambiar_password ? el('span', 'badge text-bg-warning', 'contraseña temporal')
+       : el('span', 'badge text-bg-success', 'activo'));
+    td(u.tiene_token_mcp ? el('span', 'small', `token · ${u.ultimo_uso_mcp ? 'usado ' + fecha(u.ultimo_uso_mcp) : 'sin uso'}`) : el('span', 'small text-muted', '—'));
+    td(el('span', 'small text-muted', fecha(u.ultimo_login)));
+    const acc = td([]); acc.className = 'text-end text-nowrap';
+    const b = (icono, titulo, fn, cls = 'btn-outline-secondary') => {
+      const x = el('button', `btn btn-sm ${cls} py-0 ms-1`); x.title = titulo; x.innerHTML = `<i class="bi ${icono}"></i>`; x.onclick = fn; return x;
+    };
+    acc.append(b('bi-pencil', 'Editar', () => abrir(u)), b('bi-key', 'Resetear contraseña', () => resetear(u)));
+    if (u.tiene_token_mcp) acc.append(b('bi-x-octagon', 'Revocar token del MCP', () => revocar(u), 'btn-outline-danger'));
+    tb.appendChild(tr);
+  }
+  const ri = document.getElementById('rolesInfo'); ri.replaceChildren();
+  for (const [r, desc] of Object.entries(D.roles)) {
+    const d = el('div', 'mb-1'); d.append(el('span', 'badge text-bg-primary me-2', r), document.createTextNode(desc)); ri.appendChild(d);
+  }
+}
+
+function abrir(u) {
+  editando = u;
+  document.getElementById('mTitulo').textContent = u ? `Editar · ${u.nombre}` : 'Nuevo usuario';
+  document.getElementById('mNombre').value = u ? u.nombre : '';
+  const mu = document.getElementById('mUsuario'); mu.value = u ? u.usuario : ''; mu.disabled = !!u;
+  document.getElementById('mActivo').checked = u ? u.activo : true;
+  document.getElementById('mActivoWrap').classList.toggle('d-none', !u);
+  const cont = document.getElementById('mRoles'); cont.replaceChildren();
+  for (const [r, desc] of Object.entries(D.roles)) {
+    const w = el('div', 'form-check');
+    const c = el('input', 'form-check-input'); c.type = 'checkbox'; c.value = r; c.id = 'rol-' + r;
+    c.checked = u ? u.roles.includes(r) : r === 'analista';
+    const l = el('label', 'form-check-label small'); l.htmlFor = c.id;
+    l.append(el('strong', '', r), document.createTextNode(' — ' + desc));
+    w.append(c, l); cont.appendChild(w);
+  }
+  document.getElementById('mError').classList.add('d-none');
+  document.getElementById('mTemporal').classList.add('d-none');
+  document.getElementById('mGuardar').classList.remove('d-none');
+  modal.show();
+}
+
+document.getElementById('mNombre').addEventListener('input', (e) => {
+  if (editando) return;
+  const slug = e.target.value.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '.').replace(/^\.|\.$/g, '');
+  document.getElementById('mUsuario').value = slug;
+});
+
+async function api(method, url, body) {
+  const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  return r.json();
+}
+
+function mostrarTemporal(nombre, usuario, temporal) {
+  const t = document.getElementById('mTemporal');
+  t.replaceChildren();
+  t.append(document.createTextNode(`Contraseña temporal de ${nombre} (usuario `), el('code', '', usuario),
+           document.createTextNode('): '), el('code', 'fs-6', temporal),
+           el('div', 'mt-1', 'Pasásela por un canal privado. Se le va a pedir cambiarla al ingresar; no se vuelve a mostrar.'));
+  t.classList.remove('d-none');
+}
+
+async function guardar() {
+  const roles = [...document.querySelectorAll('#mRoles input:checked')].map(c => c.value);
+  const body = { nombre: document.getElementById('mNombre').value, roles };
+  let d;
+  if (editando) d = await api('PUT', `/api/usuarios/${editando.id}`, { ...body, activo: document.getElementById('mActivo').checked });
+  else d = await api('POST', '/api/usuarios', { ...body, usuario: document.getElementById('mUsuario').value });
+  const err = document.getElementById('mError');
+  if (!d.ok) { err.textContent = d.error; err.classList.remove('d-none'); return; }
+  err.classList.add('d-none');
+  const i = D.usuarios.findIndex(x => x.id === d.usuario.id);
+  if (i >= 0) D.usuarios[i] = d.usuario; else D.usuarios.push(d.usuario);
+  render();
+  if (d.password_temporal) {
+    mostrarTemporal(d.usuario.nombre, d.usuario.usuario, d.password_temporal);
+    document.getElementById('mGuardar').classList.add('d-none');
+  } else modal.hide();
+}
+
+async function resetear(u) {
+  if (!confirm(`¿Generar una contraseña temporal para ${u.nombre}? La actual deja de funcionar y se cierran sus sesiones.`)) return;
+  const d = await api('POST', `/api/usuarios/${u.id}/reset-password`);
+  if (!d.ok) { alert(d.error); return; }
+  abrir(u);
+  document.getElementById('mGuardar').classList.add('d-none');
+  mostrarTemporal(u.nombre, u.usuario, d.password_temporal);
+  Object.assign(u, { debe_cambiar_password: true, sin_password: false }); render();
+}
+
+async function revocar(u) {
+  if (!confirm(`¿Revocar el token del MCP de ${u.nombre}? Claude deja de poder usar el orquestador con su usuario.`)) return;
+  const d = await api('POST', `/api/usuarios/${u.id}/revocar-token`);
+  if (!d.ok) { alert(d.error); return; }
+  u.tiene_token_mcp = false; render();
+}
+
+render();
+</script>
+{% endblock %}

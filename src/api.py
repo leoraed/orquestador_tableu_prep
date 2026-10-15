@@ -43,7 +43,23 @@ async def lifespan(app: FastAPI):
     detener_scheduler()
 
 
-app = FastAPI(title="Orquestador Tableau Prep", version="2.0.0", lifespan=lifespan)
+# Sin /docs ni /openapi.json: quedarían fuera del control de acceso
+app = FastAPI(title="Orquestador Tableau Prep", version="2.0.0", lifespan=lifespan,
+              docs_url=None, redoc_url=None, openapi_url=None)
+
+# ── login y permisos ───────────────────────────────────────────────────────
+# Toda ruta pasa por control_acceso (se registra antes de definir las rutas):
+# la regla de cada una está en src/permisos.py; las que no figuran se deniegan.
+from starlette.middleware.sessions import SessionMiddleware
+from src import acceso_web as _acceso_web
+
+app.router.dependencies.append(Depends(_acceso_web.control_acceso))
+app.add_exception_handler(_acceso_web.AccesoDenegado, _acceso_web.manejar_acceso_denegado)
+app.add_middleware(_acceso_web.AuditoriaMiddleware)
+app.add_middleware(SessionMiddleware, secret_key=_acceso_web.clave_sesion(BASE_DIR), session_cookie="orq_sesion",
+                   max_age=_acceso_web.SESION_HORAS * 3600, same_site="lax")
+app.include_router(_acceso_web.router)
+templates.env.globals["PERMISOS"] = _acceso_web.PERMISOS
 
 
 # ── helpers ────────────────────────────────────────────────────────────────
@@ -100,6 +116,9 @@ def _jobs_map() -> dict[str, str]:
 
 @app.get("/")
 def dashboard(request: Request, msg: str = None, db: Session = Depends(get_db)):
+    u = _acceso_web.usuario_actual(request)
+    if u and not u.puede("etl.ver"):
+        return RedirectResponse("/tableros", status_code=303)
     flows = load_flows()
     pipelines = load_pipelines()
     ejecuciones = db.query(EjecucionFlow).order_by(EjecucionFlow.inicio.desc()).limit(10).all()
@@ -1589,6 +1608,15 @@ def _tablero_o_404(db: Session, slug: str) -> Tablero:
     return t
 
 
+def _tablero_propio(request: Request, db: Session, slug: str) -> Tablero:
+    """El tablero, si el usuario es su autor o puede administrar tableros."""
+    t = _tablero_o_404(db, slug)
+    u = _acceso_web.usuario_actual(request)
+    if not _tableros.puede_publicar(t, u.nombre, u.puede("tableros.administrar")):
+        raise _acceso_web.AccesoDenegado(403, "Solo el autor del tablero o un admin pueden modificarlo.")
+    return t
+
+
 async def _leer_html(file: UploadFile) -> str:
     if not (file.filename or "").lower().endswith((".html", ".htm")):
         raise _tableros.TableroError("El archivo tiene que ser .html.")
@@ -1615,8 +1643,11 @@ def pagina_tableros(request: Request, db: Session = Depends(get_catalog_db)):
 @app.get("/tableros/{slug}")
 def pagina_tablero(slug: str, request: Request, db: Session = Depends(get_catalog_db)):
     t = _tablero_o_404(db, slug)
+    u = _acceso_web.usuario_actual(request)
     return templates.TemplateResponse(request, "tablero.html", {
         "tablero": _tableros.a_dict(t), "modelos": _modelos_nombres(db), "sandbox": _SANDBOX,
+        "puede_modificar": u.puede("tableros.publicar")
+                           and _tableros.puede_publicar(t, u.nombre, u.puede("tableros.administrar")),
         "active": "tableros",
     })
 
@@ -1647,11 +1678,12 @@ def api_listar_tableros(db: Session = Depends(get_catalog_db)):
 
 
 @app.post("/api/tableros")
-async def api_crear_tablero(file: UploadFile = File(...), titulo: str = Form(...),
+async def api_crear_tablero(request: Request, file: UploadFile = File(...), titulo: str = Form(...),
                             descripcion: str = Form(""), modelo: str = Form(""), tags: str = Form(""),
                             datos_hasta: str = Form(""), db: Session = Depends(get_catalog_db)):
     try:
-        t = _tableros.crear(db, titulo, await _leer_html(file), descripcion, modelo, tags, datos_hasta)
+        t = _tableros.crear(db, titulo, await _leer_html(file), descripcion, modelo, tags, datos_hasta,
+                            autor=_acceso_web.usuario_actual(request).nombre)
     except _tableros.TableroError as e:
         return JSONResponse({"ok": False, "error": str(e)})
     db.commit()
@@ -1660,11 +1692,13 @@ async def api_crear_tablero(file: UploadFile = File(...), titulo: str = Form(...
 
 
 @app.post("/api/tableros/{slug}/versiones")
-async def api_nueva_version_tablero(slug: str, file: UploadFile = File(...), datos_hasta: str = Form(""),
-                                    nota: str = Form(""), db: Session = Depends(get_catalog_db)):
-    t = _tablero_o_404(db, slug)
+async def api_nueva_version_tablero(slug: str, request: Request, file: UploadFile = File(...),
+                                    datos_hasta: str = Form(""), nota: str = Form(""),
+                                    db: Session = Depends(get_catalog_db)):
+    t = _tablero_propio(request, db, slug)
     try:
-        _tableros.nueva_version(db, t, await _leer_html(file), datos_hasta, nota)
+        _tableros.nueva_version(db, t, await _leer_html(file), datos_hasta, nota,
+                                autor=_acceso_web.usuario_actual(request).nombre)
     except _tableros.TableroError as e:
         return JSONResponse({"ok": False, "error": str(e)})
     db.commit()
@@ -1674,7 +1708,7 @@ async def api_nueva_version_tablero(slug: str, file: UploadFile = File(...), dat
 
 @app.put("/api/tableros/{slug}")
 async def api_editar_tablero(slug: str, request: Request, db: Session = Depends(get_catalog_db)):
-    t = _tablero_o_404(db, slug)
+    t = _tablero_propio(request, db, slug)
     data = await request.json()
     try:
         _tableros.editar(t, data.get("titulo"), data.get("descripcion"), data.get("modelo"), data.get("tags"))
@@ -1685,7 +1719,7 @@ async def api_editar_tablero(slug: str, request: Request, db: Session = Depends(
 
 
 @app.delete("/api/tableros/{slug}")
-def api_eliminar_tablero(slug: str, db: Session = Depends(get_catalog_db)):
-    db.delete(_tablero_o_404(db, slug))
+def api_eliminar_tablero(slug: str, request: Request, db: Session = Depends(get_catalog_db)):
+    db.delete(_tablero_propio(request, db, slug))
     db.commit()
     return JSONResponse({"ok": True})

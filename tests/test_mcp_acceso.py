@@ -1,4 +1,4 @@
-"""Tokens del MCP, auditoría y autoría de tableros (catálogo SQLite en memoria)."""
+"""MCP: token del usuario de la app, permisos por herramienta, auditoría y autoría."""
 import json
 import socket
 import threading
@@ -13,10 +13,11 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import mcp_server
-from src import mcp_acceso as acceso
+from src import usuarios
 from src.catalog.db import BaseCatalog
-from src.catalog.models_acceso import McpAuditoria
+from src.catalog.models_acceso import Auditoria, McpUsuario, Usuario
 from src.catalog.models_tableros import Tablero
+from src.permisos import permisos_de
 
 HTML = "<!DOCTYPE html><html><body>tablero</body></html>"
 
@@ -30,55 +31,66 @@ def Session(monkeypatch):
     return S
 
 
-def crear(S, nombre, rol="usuario"):
+def crear(S, usuario, roles=("analista",), con_token=True):
     db = S()
-    _, token = acceso.crear_usuario(db, nombre, rol)
+    u, _ = usuarios.crear(db, usuario, usuario.title(), list(roles), password="clave-segura-123")
+    token = usuarios.generar_token_mcp(u) if con_token else None
     db.commit()
     db.close()
     return token
 
 
-def como(usuario):
-    return mcp_server._usuario_actual.set(usuario)
+def sesion(nombre, *roles):
+    return usuarios.SesionUsuario(1, nombre.lower(), nombre, roles, permisos_de(roles))
+
+
+def como(u):
+    return mcp_server._usuario_actual.set(u)
 
 
 # ── tokens ───────────────────────────────────────────────────────────────────
 
-def test_tokens_crear_verificar_revocar_regenerar(Session):
-    token = crear(Session, "Ana")
+def test_token_del_usuario(Session):
+    token = crear(Session, "ana")
     db = Session()
-    assert token.startswith("orq_")
-    assert acceso.verificar_token(db, token) == acceso.Usuario("Ana", "usuario")
-    assert acceso.verificar_token(db, "orq_otro") is None
-    assert acceso.verificar_token(db, None) is None
-    # El token no se guarda en claro
-    from src.catalog.models_acceso import McpUsuario
-    assert db.query(McpUsuario).one().token_hash == acceso.hash_token(token)
+    u = usuarios.verificar_token_mcp(db, token)
+    assert u.nombre == "Ana" and u.puede("tableros.publicar")
+    assert usuarios.verificar_token_mcp(db, "orq_otro") is None
+    assert usuarios.verificar_token_mcp(db, None) is None
+    fila = db.query(Usuario).one()
+    assert fila.mcp_token_hash == usuarios.hash_token(token)          # nunca en claro
 
-    with pytest.raises(ValueError, match="Ya existe"):
-        acceso.crear_usuario(db, "Ana")
-    with pytest.raises(ValueError, match="Rol inválido"):
-        acceso.crear_usuario(db, "Beto", "jefe")
+    nuevo = usuarios.generar_token_mcp(fila); db.commit()
+    assert usuarios.verificar_token_mcp(db, token) is None              # el anterior deja de andar
+    assert usuarios.verificar_token_mcp(db, nuevo).nombre == "Ana"
+    fila.activo = False; db.commit()
+    assert usuarios.verificar_token_mcp(db, nuevo) is None              # usuario desactivado
+    db.close()
 
-    acceso.revocar(db, "Ana"); db.commit()
-    assert acceso.verificar_token(db, token) is None
-    nuevo = acceso.regenerar_token(db, "Ana"); db.commit()
-    assert acceso.verificar_token(db, nuevo).nombre == "Ana"
-    assert acceso.verificar_token(db, token) is None
+
+def test_migra_usuarios_mcp_conservando_el_token(Session):
+    db = Session()
+    db.add(McpUsuario(nombre="Leonardo Raed", rol="admin", token_hash=usuarios.hash_token("orq_viejo"), activo=True))
+    db.commit()
+    assert usuarios.migrar_usuarios_mcp(db) == ["leonardo.raed"]
+    db.commit()
+    assert usuarios.migrar_usuarios_mcp(db) == []                       # idempotente
+    u = usuarios.buscar(db, "leonardo.raed")
+    assert u.roles == "admin" and u.password_hash is None and u.debe_cambiar_password
+    assert usuarios.verificar_token_mcp(db, "orq_viejo").nombre == "Leonardo Raed"
     db.close()
 
 
 # ── middleware ───────────────────────────────────────────────────────────────
 
 async def _eco(scope, receive, send):
-    """App mínima que responde con el usuario que dejó el middleware."""
     u = mcp_server._usuario()
     await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"text/plain")]})
     await send({"type": "http.response.body", "body": (u.nombre if u else "-").encode()})
 
 
 def test_middleware_exige_token(Session, monkeypatch):
-    token = crear(Session, "Ana")
+    token = crear(Session, "ana")
     app = mcp_server.AutenticacionMiddleware(_eco)
 
     async def pedir(headers):
@@ -87,62 +99,63 @@ def test_middleware_exige_token(Session, monkeypatch):
 
     assert anyio.run(pedir, {}).status_code == 401
     assert anyio.run(pedir, {"Authorization": "Bearer orq_falso"}).status_code == 401
-    assert anyio.run(pedir, {"Authorization": token}).status_code == 401            # sin "Bearer"
+    assert anyio.run(pedir, {"Authorization": token}).status_code == 401
     r = anyio.run(pedir, {"Authorization": f"Bearer {token}"})
     assert r.status_code == 200 and r.text == "Ana"
-
     monkeypatch.setattr(mcp_server, "_AUTH_DESACTIVADA", True)
     assert anyio.run(pedir, {}).text.startswith("anónimo")
 
 
-# ── auditoría y autoría ──────────────────────────────────────────────────────
+# ── permisos, auditoría y autoría ────────────────────────────────────────────
 
-def test_auditoria_registra_usuario_y_resume_html(Session):
-    marca = como(acceso.Usuario("Ana", "usuario"))
+def test_permisos_por_herramienta(Session):
+    marca = como(sesion("Lucia", "lector"))
     try:
-        mcp_server.publicar_dashboard("Ventas", HTML)
-        mcp_server.publicar_dashboard("", HTML, actualizar="no-existe")
+        assert "no tiene permiso para usar consultar" in mcp_server.consultar("m", ["x"], [])
+        assert "no tiene permiso para usar publicar_dashboard" in mcp_server.publicar_dashboard("X", HTML)
+        assert "No hay tableros" in mcp_server.listar_dashboards()      # ver sí puede
     finally:
         mcp_server._usuario_actual.reset(marca)
+    mcp_server._usuario_actual.set(None)
+    assert "no tiene permiso" in mcp_server.listar_dashboards()         # sin usuario: nada
+
     db = Session()
-    regs = db.query(McpAuditoria).order_by(McpAuditoria.id).all()
-    assert [(r.usuario, r.herramienta, r.ok) for r in regs] == [
-        ("Ana", "publicar_dashboard", True), ("Ana", "publicar_dashboard", False)]
-    params = json.loads(regs[0].parametros)
-    assert params["html"] == f"<{len(HTML)} bytes>" and params["titulo"] == "Ventas"
-    assert "no existe" in regs[1].detalle
+    regs = [(a.usuario, a.accion, a.ok) for a in db.query(Auditoria).order_by(Auditoria.id).all()]
+    assert regs[:3] == [("Lucia", "consultar", False), ("Lucia", "publicar_dashboard", False),
+                        ("Lucia", "listar_dashboards", True)]
     db.close()
 
 
-def test_solo_el_autor_o_un_admin_actualizan(Session):
-    def publicar(usuario, **kw):
-        marca = como(usuario)
+def test_auditoria_resume_html(Session):
+    marca = como(sesion("Ana", "analista"))
+    try:
+        mcp_server.publicar_dashboard("Ventas", HTML)
+    finally:
+        mcp_server._usuario_actual.reset(marca)
+    db = Session()
+    a = db.query(Auditoria).one()
+    assert (a.origen, a.usuario, a.accion, a.ok) == ("mcp", "Ana", "publicar_dashboard", True)
+    assert json.loads(a.parametros)["html"] == f"<{len(HTML)} bytes>"
+    db.close()
+
+
+def test_solo_el_autor_o_quien_administra_tableros(Session):
+    def publicar(u, **kw):
+        marca = como(u)
         try:
             return mcp_server.publicar_dashboard(kw.pop("titulo", ""), HTML, **kw)
         finally:
             mcp_server._usuario_actual.reset(marca)
 
-    ana, beto, admin = acceso.Usuario("Ana", "usuario"), acceso.Usuario("Beto", "usuario"), acceso.Usuario("Root", "admin")
+    ana, beto, admin = sesion("Ana", "analista"), sesion("Beto", "analista"), sesion("Root", "admin")
     publicar(ana, titulo="Ventas")
     assert "versión 2" in publicar(ana, actualizar="ventas")
     assert "solo su autor o un admin" in publicar(beto, actualizar="ventas")
     assert "versión 3" in publicar(admin, actualizar="ventas")
-
-    # Tablero subido desde la app (sin autor): solo admins
-    db = Session()
-    from src.catalog import tableros_service as svc
-    svc.crear(db, "Desde la app", HTML); db.commit(); db.close()
-    assert "se subió desde la app" in publicar(ana, actualizar="desde-la-app")
-    assert "versión 2" in publicar(admin, actualizar="desde-la-app")
-
     db = Session()
     t = db.query(Tablero).filter(Tablero.slug == "ventas").one()
-    assert t.autor == "Ana" and [v.autor for v in t.versiones] == ["Ana", "Ana", "Root"]
+    assert [v.autor for v in t.versiones] == ["Ana", "Ana", "Root"]
     db.close()
-    assert "autor Ana" in mcp_server.listar_dashboards()
-
-    mcp_server._usuario_actual.set(None)
-    assert "no hay un usuario autenticado" in mcp_server.publicar_dashboard("X", HTML)
 
 
 # ── punta a punta: servidor SSE real + cliente MCP ───────────────────────────
@@ -157,7 +170,7 @@ def test_punta_a_punta_con_cliente_mcp(Session):
     from mcp import ClientSession
     from mcp.client.sse import sse_client
 
-    token = crear(Session, "Ana")
+    token = crear(Session, "ana")
     puerto = _puerto_libre()
     server = uvicorn.Server(uvicorn.Config(mcp_server.AutenticacionMiddleware(mcp_server.mcp.sse_app()),
                                            host="127.0.0.1", port=puerto, log_level="warning"))
@@ -177,15 +190,14 @@ def test_punta_a_punta_con_cliente_mcp(Session):
                 return res.content[0].text
 
     try:
-        texto = anyio.run(llamar, {"Authorization": f"Bearer {token}"})
-        assert "Publiqué el tablero «E2E»" in texto
+        assert "Publiqué el tablero «E2E»" in anyio.run(llamar, {"Authorization": f"Bearer {token}"})
         with pytest.raises(Exception):
-            anyio.run(llamar, {})          # sin token: el servidor responde 401 al conectar
+            anyio.run(llamar, {})
     finally:
         server.should_exit = True
         hilo.join(timeout=5)
 
     db = Session()
-    assert db.query(Tablero).filter(Tablero.slug == "e2e").one().autor == "Ana"   # el usuario llegó a la herramienta
-    assert db.query(McpAuditoria).filter(McpAuditoria.herramienta == "publicar_dashboard").one().usuario == "Ana"
+    assert db.query(Tablero).filter(Tablero.slug == "e2e").one().autor == "Ana"
+    assert db.query(Auditoria).filter(Auditoria.accion == "publicar_dashboard").one().usuario == "Ana"
     db.close()

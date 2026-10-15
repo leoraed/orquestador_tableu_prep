@@ -4,13 +4,13 @@
 <div class="d-flex justify-content-between align-items-center mb-4">
   <h5 class="fw-bold mb-0"><i class="bi bi-layers me-2 text-primary"></i>Modelos Semánticos</h5>
   <div class="d-flex gap-2">
-    <button class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#modalImportar">
+    <button data-permiso="modelos.administrar" class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#modalImportar">
       <i class="bi bi-upload me-1"></i>Importar TWB
     </button>
-    <button class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#modalYaml">
+    <button data-permiso="modelos.administrar" class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#modalYaml">
       <i class="bi bi-file-earmark-arrow-up me-1"></i>Cargar YAML
     </button>
-    <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#modalCrear">
+    <button data-permiso="modelos.editar" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#modalCrear">
       <i class="bi bi-plus-lg me-1"></i>Nuevo modelo
     </button>
   </div>
@@ -73,7 +73,7 @@
             <a href="/api/modelos/{{ m.name }}/yaml" class="btn btn-sm btn-outline-success py-0 me-1" download>
               <i class="bi bi-download me-1"></i>YAML
             </a>
-            <button class="btn btn-sm btn-outline-danger py-0"
+            <button data-permiso="modelos.administrar" class="btn btn-sm btn-outline-danger py-0"
               onclick="eliminarModelo('{{ m.name }}')">
               <i class="bi bi-trash"></i>
             </button>
@@ -282,6 +282,7 @@ async function cargarYaml() {
 }
 
 async function cargarEliminados() {
+  if (!puede('modelos.administrar')) return;
   const d = await fetch('/api/modelos-eliminados').then(r => r.json());
   if (!d.ok || !d.modelos.length) return;
   document.getElementById('cardEliminados').classList.remove('d-none');

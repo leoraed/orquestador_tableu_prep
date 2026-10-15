@@ -122,7 +122,7 @@
               <tbody id="tbodyCampos"></tbody>
             </table>
           </div>
-          <div class="card-footer small text-muted py-1">Hacé clic en una descripción o en los tags para editarlos · Enter guarda · Esc cancela</div>
+          <div class="card-footer small text-muted py-1" data-permiso="catalogo.documentar">Hacé clic en una descripción o en los tags para editarlos · Enter guarda · Esc cancela</div>
         </div>
       </div>
     </div>
@@ -354,7 +354,7 @@ function campoPorId(id) {
 }
 
 function editar(div, id, attr) {
-  if (div.querySelector('input')) return;
+  if (!puede('catalogo.documentar') || div.querySelector('input')) return;
   const f = campoPorId(id);
   const input = document.createElement('input');
   input.className = 'form-control form-control-sm';

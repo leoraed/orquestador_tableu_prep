@@ -33,3 +33,4 @@ config/flows_.yaml
 
 # Config local del cliente MCP (contiene el token del usuario)
 .mcp.json
+data/.secret_key

@@ -29,6 +29,18 @@ Base.metadata.create_all(bind=engine)
 catalog_models.BaseCatalog.metadata.create_all(bind=engine_catalog)
 models_semantic.migrar_columnas_semanticas(engine_catalog)
 
+# Usuarios del MCP de la primera versión → usuarios de la app (conservan su token)
+from src.catalog.db import SessionCatalog
+from src import usuarios as _usuarios
+_db = SessionCatalog()
+try:
+    for _u in _usuarios.migrar_usuarios_mcp(_db):
+        logging.getLogger(__name__).warning(
+            "Usuario MCP migrado a la app: %s (sin contraseña: python -m src.usuarios reset-password %s)", _u, _u)
+    _db.commit()
+finally:
+    _db.close()
+
 # Migración MySQL: agregar columna graph_data si no existe
 with engine_catalog.connect() as conn:
     result = conn.execute(text(

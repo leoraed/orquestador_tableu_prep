@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block content %}
+<h5 class="fw-bold mb-3"><i class="bi bi-person-circle me-2 text-primary"></i>Mi perfil</h5>
+
+{% if cambiar %}
+<div class="alert alert-warning small">
+  <i class="bi bi-key me-1"></i>Tenés que elegir una contraseña nueva para seguir usando el orquestador.
+</div>
+{% endif %}
+
+<div class="row g-3">
+  <div class="col-lg-5">
+    <div class="card">
+      <div class="card-body">
+        <div class="small text-muted">Usuario</div>
+        <div class="fw-semibold mb-2">{{ u.usuario }}</div>
+        <div class="small text-muted">Nombre</div>
+        <div class="fw-semibold mb-2">{{ u.nombre }}</div>
+        <div class="small text-muted mb-1">Roles</div>
+        {% for r in request.state.usuario.roles %}
+        <div class="small mb-1"><span class="badge text-bg-primary me-1">{{ r }}</span>{{ roles[r].descripcion }}</div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="card mt-3">
+      <div class="card-header py-2 fw-semibold small">Cambiar contraseña</div>
+      <div class="card-body">
+        <input type="password" id="actual" class="form-control form-control-sm mb-2" placeholder="Contraseña actual" autocomplete="current-password">
+        <input type="password" id="nueva" class="form-control form-control-sm mb-2" placeholder="Contraseña nueva (mínimo 10 caracteres)" autocomplete="new-password">
+        <input type="password" id="nueva2" class="form-control form-control-sm mb-2" placeholder="Repetir contraseña nueva" autocomplete="new-password">
+        <button class="btn btn-primary btn-sm" onclick="cambiarPassword()">Guardar contraseña</button>
+        <div id="msgPassword" class="small mt-2"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-7">
+    <div class="card">
+      <div class="card-header py-2 fw-semibold small"><i class="bi bi-robot me-1"></i>Acceso al MCP (Claude)</div>
+      <div class="card-body small">
+        {% if 'modelos.ver' in request.state.usuario.permisos or 'tableros.ver' in request.state.usuario.permisos %}
+        <p class="text-muted">
+          Con este token Claude puede consultar los modelos y publicar tableros <strong>con tus permisos</strong>.
+          Todo lo que haga queda registrado a tu nombre.
+          {% if u.mcp_token_hash %}
+          Tenés un token generado el {{ u.mcp_token_creado.strftime('%d/%m/%Y') if u.mcp_token_creado else '—' }};
+          generar uno nuevo invalida el anterior.
+          {% endif %}
+        </p>
+        <button class="btn btn-outline-primary btn-sm" onclick="generarToken()" {% if cambiar %}disabled{% endif %}>
+          <i class="bi bi-key me-1"></i>{{ 'Generar token nuevo' if u.mcp_token_hash else 'Generar token' }}
+        </button>
+        <div id="tokenBox" class="d-none mt-3">
+          <div class="alert alert-warning py-2">Copialo ahora: <strong>no se vuelve a mostrar</strong>.</div>
+          <div class="mb-1 fw-semibold">Configuración para Claude Desktop o Claude Code (<code>.mcp.json</code>):</div>
+          <pre class="bg-light border rounded p-2 mb-1" id="config" style="white-space:pre-wrap"></pre>
+          <button class="btn btn-sm btn-outline-secondary" onclick="navigator.clipboard.writeText(document.getElementById('config').textContent)">
+            <i class="bi bi-clipboard me-1"></i>Copiar</button>
+        </div>
+        {% else %}
+        <p class="text-muted mb-0">Tus roles no incluyen acceso a modelos ni tableros.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function post(url, body) {
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                               body: body ? JSON.stringify(body) : undefined });
+  return r.json();
+}
+async function cambiarPassword() {
+  const msg = document.getElementById('msgPassword');
+  const nueva = document.getElementById('nueva').value, nueva2 = document.getElementById('nueva2').value;
+  if (nueva !== nueva2) { msg.className = 'small mt-2 text-danger'; msg.textContent = 'Las contraseñas nuevas no coinciden.'; return; }
+  const d = await post('/api/perfil/password', { actual: document.getElementById('actual').value, nueva });
+  if (!d.ok) { msg.className = 'small mt-2 text-danger'; msg.textContent = d.error; return; }
+  msg.className = 'small mt-2 text-success'; msg.textContent = 'Contraseña actualizada.';
+  ['actual', 'nueva', 'nueva2'].forEach(id => document.getElementById(id).value = '');
+  if (new URLSearchParams(location.search).get('cambiar')) setTimeout(() => location.href = '/', 800);
+}
+async function generarToken() {
+  if (!confirm('Se genera un token nuevo y el anterior (si había) deja de funcionar. ¿Seguir?')) return;
+  const d = await post('/api/perfil/token-mcp');
+  if (!d.ok) { alert(d.error); return; }
+  const config = {
+    mcpServers: { orquestador: {
+      command: 'npx',
+      args: ['mcp-remote@latest', `http://${location.hostname}:8001/sse`, '--allow-http', '--header', 'Authorization:${ORQ_MCP_AUTH}'],
+      env: { ORQ_MCP_AUTH: `Bearer ${d.token}` },
+    } },
+  };
+  document.getElementById('config').textContent = JSON.stringify(config, null, 2);
+  document.getElementById('tokenBox').classList.remove('d-none');
+}
+</script>
+{% endblock %}

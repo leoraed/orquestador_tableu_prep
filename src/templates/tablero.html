@@ -26,6 +26,7 @@
     <a id="lnkAbrir" class="btn btn-outline-secondary btn-sm" target="_blank" rel="noopener" title="Abrir en pestaña nueva">
       <i class="bi bi-box-arrow-up-right"></i></a>
     <a id="lnkDescargar" class="btn btn-outline-secondary btn-sm" title="Descargar HTML"><i class="bi bi-download"></i></a>
+    {% if puede_modificar %}
     <div class="dropdown">
       <button class="btn btn-outline-secondary btn-sm dropdown-toggle" data-bs-toggle="dropdown"><i class="bi bi-three-dots"></i></button>
       <ul class="dropdown-menu dropdown-menu-end">
@@ -38,6 +39,7 @@
           <i class="bi bi-trash me-2"></i>Eliminar tablero</a></li>
       </ul>
     </div>
+    {% endif %}
   </div>
 </div>
 
