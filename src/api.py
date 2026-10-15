@@ -1569,3 +1569,183 @@ async def api_importar_yaml(file: UploadFile = File(...), db: Session = Depends(
     _restaurar_modelo(db, contenido, nombre, f"Antes de cargar {file.filename}")
     db.commit()
     return JSONResponse({"ok": True, "name": nombre, "reemplazado": existia})
+
+
+# ── Tableros (dashboards HTML armados con Claude) ─────────────────────────────
+
+import re as _re
+import unicodedata as _unicodedata
+from datetime import date as _date
+from fastapi.responses import HTMLResponse
+from src.catalog.models_tableros import Tablero, TableroVersion
+
+_TABLERO_MAX_BYTES = 10 * 1024 * 1024
+# El HTML de un tablero ejecuta JavaScript propio: se sirve aislado (sin acceso a la
+# app, sus cookies ni su API). Sin allow-same-origin el documento queda en un origen opaco.
+_SANDBOX = "allow-scripts allow-popups allow-downloads"
+
+
+def _slug(texto: str) -> str:
+    s = _unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode().lower()
+    return _re.sub(r"[^a-z0-9]+", "-", s).strip("-")[:100] or "tablero"
+
+
+def _slug_unico(db: Session, base: str) -> str:
+    slug, n = base, 2
+    while db.query(Tablero).filter(Tablero.slug == slug).first():
+        slug, n = f"{base}-{n}", n + 1
+    return slug
+
+
+def _tablero_o_404(db: Session, slug: str) -> Tablero:
+    from fastapi import HTTPException
+    t = db.query(Tablero).filter(Tablero.slug == slug).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Tablero no encontrado.")
+    return t
+
+
+def _tablero_to_dict(t: Tablero) -> dict:
+    u = t.ultima
+    return {
+        "slug": t.slug, "titulo": t.titulo, "descripcion": t.descripcion or "",
+        "modelo": t.modelo or "", "tags": [x.strip() for x in (t.tags or "").split(",") if x.strip()],
+        "tipo": t.tipo, "version": u.version if u else 0,
+        "datos_hasta": u.datos_hasta.isoformat() if u and u.datos_hasta else None,
+        "created_at": t.created_at.isoformat() if t.created_at else None,
+        "updated_at": t.updated_at.isoformat() if t.updated_at else None,
+        "versiones": [{"version": v.version, "nota": v.nota or "",
+                       "datos_hasta": v.datos_hasta.isoformat() if v.datos_hasta else None,
+                       "created_at": v.created_at.isoformat() if v.created_at else None,
+                       "bytes": len(v.html.encode("utf-8"))} for v in reversed(t.versiones)],
+    }
+
+
+async def _leer_html(file: UploadFile) -> tuple[str | None, str | None]:
+    if not (file.filename or "").lower().endswith((".html", ".htm")):
+        return None, "El archivo tiene que ser .html."
+    contenido = await file.read(_TABLERO_MAX_BYTES + 1)
+    if len(contenido) > _TABLERO_MAX_BYTES:
+        return None, "El archivo supera los 10 MB."
+    try:
+        html = contenido.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return None, "El archivo no está en UTF-8."
+    if "<" not in html:
+        return None, "El archivo no parece HTML."
+    return html, None
+
+
+def _parse_fecha(valor: str | None) -> tuple[_date | None, str | None]:
+    if not valor:
+        return None, None
+    try:
+        return _date.fromisoformat(valor.strip()), None
+    except ValueError:
+        return None, "La fecha de los datos tiene que ser AAAA-MM-DD."
+
+
+@app.get("/tableros")
+def pagina_tableros(request: Request, db: Session = Depends(get_catalog_db)):
+    tableros = db.query(Tablero).order_by(Tablero.updated_at.desc()).all()
+    modelos = [n for (n,) in db.query(SemanticModel.name).order_by(SemanticModel.name).all()]
+    return templates.TemplateResponse(request, "tableros.html", {
+        "datos": {"tableros": [_tablero_to_dict(t) for t in tableros], "modelos": modelos},
+        "active": "tableros",
+    })
+
+
+@app.get("/tableros/{slug}")
+def pagina_tablero(slug: str, request: Request, db: Session = Depends(get_catalog_db)):
+    t = _tablero_o_404(db, slug)
+    modelos = [n for (n,) in db.query(SemanticModel.name).order_by(SemanticModel.name).all()]
+    return templates.TemplateResponse(request, "tablero.html", {
+        "tablero": _tablero_to_dict(t), "modelos": modelos, "sandbox": _SANDBOX, "active": "tableros",
+    })
+
+
+@app.get("/tableros/{slug}/contenido")
+def contenido_tablero(slug: str, version: int | None = None, descargar: bool = False,
+                      db: Session = Depends(get_catalog_db)):
+    from fastapi import HTTPException
+    t = _tablero_o_404(db, slug)
+    v = next((x for x in t.versiones if x.version == version), None) if version else t.ultima
+    if v is None:
+        raise HTTPException(status_code=404, detail="Versión no encontrada.")
+    headers = {
+        "Content-Security-Policy": f"sandbox {_SANDBOX}",
+        "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "no-referrer",
+        "Cache-Control": "no-store",
+    }
+    if descargar:
+        headers["Content-Disposition"] = f'attachment; filename="{t.slug}_v{v.version}.html"'
+    return HTMLResponse(v.html, headers=headers)
+
+
+@app.get("/api/tableros")
+def api_listar_tableros(db: Session = Depends(get_catalog_db)):
+    return JSONResponse({"ok": True, "tableros": [_tablero_to_dict(t) for t in
+                         db.query(Tablero).order_by(Tablero.updated_at.desc()).all()]})
+
+
+@app.post("/api/tableros")
+async def api_crear_tablero(file: UploadFile = File(...), titulo: str = Form(...),
+                            descripcion: str = Form(""), modelo: str = Form(""), tags: str = Form(""),
+                            datos_hasta: str = Form(""), db: Session = Depends(get_catalog_db)):
+    titulo = titulo.strip()
+    if not titulo:
+        return JSONResponse({"ok": False, "error": "El título es obligatorio."})
+    html, error = await _leer_html(file)
+    fecha, error_fecha = _parse_fecha(datos_hasta)
+    if error or error_fecha:
+        return JSONResponse({"ok": False, "error": error or error_fecha})
+    ahora = _dt.utcnow()
+    t = Tablero(slug=_slug_unico(db, _slug(titulo)), titulo=titulo, descripcion=descripcion.strip() or None,
+                modelo=modelo.strip() or None, tags=tags.strip() or None, created_at=ahora, updated_at=ahora)
+    t.versiones.append(TableroVersion(version=1, html=html, datos_hasta=fecha, nota="Primera versión",
+                                      created_at=ahora))
+    db.add(t)
+    db.commit()
+    db.refresh(t)
+    return JSONResponse({"ok": True, "tablero": _tablero_to_dict(t)})
+
+
+@app.post("/api/tableros/{slug}/versiones")
+async def api_nueva_version_tablero(slug: str, file: UploadFile = File(...), datos_hasta: str = Form(""),
+                                    nota: str = Form(""), db: Session = Depends(get_catalog_db)):
+    t = _tablero_o_404(db, slug)
+    html, error = await _leer_html(file)
+    fecha, error_fecha = _parse_fecha(datos_hasta)
+    if error or error_fecha:
+        return JSONResponse({"ok": False, "error": error or error_fecha})
+    ahora = _dt.utcnow()
+    t.versiones.append(TableroVersion(version=(t.ultima.version if t.ultima else 0) + 1, html=html,
+                                      datos_hasta=fecha, nota=nota.strip()[:500] or None, created_at=ahora))
+    t.updated_at = ahora
+    db.commit()
+    db.refresh(t)
+    return JSONResponse({"ok": True, "tablero": _tablero_to_dict(t)})
+
+
+@app.put("/api/tableros/{slug}")
+async def api_editar_tablero(slug: str, request: Request, db: Session = Depends(get_catalog_db)):
+    t = _tablero_o_404(db, slug)
+    data = await request.json()
+    titulo = (data.get("titulo") or "").strip()
+    if not titulo:
+        return JSONResponse({"ok": False, "error": "El título es obligatorio."})
+    t.titulo = titulo
+    t.descripcion = (data.get("descripcion") or "").strip() or None
+    t.modelo = (data.get("modelo") or "").strip() or None
+    t.tags = ", ".join(x.strip() for x in (data.get("tags") or "").split(",") if x.strip()) or None
+    t.updated_at = _dt.utcnow()
+    db.commit()
+    return JSONResponse({"ok": True, "tablero": _tablero_to_dict(t)})
+
+
+@app.delete("/api/tableros/{slug}")
+def api_eliminar_tablero(slug: str, db: Session = Depends(get_catalog_db)):
+    db.delete(_tablero_o_404(db, slug))
+    db.commit()
+    return JSONResponse({"ok": True})

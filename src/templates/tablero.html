@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+
+{% block head %}
+<style>
+  .visor { width: 100%; height: calc(100vh - 210px); min-height: 520px; border: 1px solid #e3e6ec;
+           border-radius: 10px; background: #fff; }
+</style>
+{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-2">
+  <ol class="breadcrumb mb-0">
+    <li class="breadcrumb-item"><a href="/tableros" class="text-decoration-none">Tableros</a></li>
+    <li class="breadcrumb-item active" id="migaTitulo"></li>
+  </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-start gap-3 mb-2">
+  <div>
+    <h5 class="fw-bold mb-1" id="titulo"></h5>
+    <div class="small text-muted mb-1" id="descripcion"></div>
+    <div class="small d-flex flex-wrap gap-1 align-items-center" id="meta"></div>
+  </div>
+  <div class="d-flex gap-2 align-items-center flex-shrink-0">
+    <select id="selVersion" class="form-select form-select-sm" style="width:auto" title="Versión"></select>
+    <a id="lnkAbrir" class="btn btn-outline-secondary btn-sm" target="_blank" rel="noopener" title="Abrir en pestaña nueva">
+      <i class="bi bi-box-arrow-up-right"></i></a>
+    <a id="lnkDescargar" class="btn btn-outline-secondary btn-sm" title="Descargar HTML"><i class="bi bi-download"></i></a>
+    <div class="dropdown">
+      <button class="btn btn-outline-secondary btn-sm dropdown-toggle" data-bs-toggle="dropdown"><i class="bi bi-three-dots"></i></button>
+      <ul class="dropdown-menu dropdown-menu-end">
+        <li><a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#modalVersion">
+          <i class="bi bi-upload me-2"></i>Subir nueva versión</a></li>
+        <li><a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#modalEditar">
+          <i class="bi bi-pencil me-2"></i>Editar datos</a></li>
+        <li><hr class="dropdown-divider"></li>
+        <li><a class="dropdown-item text-danger" href="#" onclick="eliminar();return false">
+          <i class="bi bi-trash me-2"></i>Eliminar tablero</a></li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<iframe id="visor" class="visor" sandbox="{{ sandbox }}" title="Tablero"></iframe>
+
+<!-- Modal nueva versión -->
+<div class="modal fade" id="modalVersion" tabindex="-1">
+  <div class="modal-dialog"><div class="modal-content">
+    <div class="modal-header">
+      <h6 class="modal-title fw-bold">Subir nueva versión</h6>
+      <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+    </div>
+    <div class="modal-body">
+      <p class="small text-muted">La versión actual se conserva y se puede volver a ver desde el selector de versiones.</p>
+      <input type="file" id="vArchivo" class="form-control form-control-sm mb-2" accept=".html,.htm">
+      <div class="row g-2">
+        <div class="col-5"><label class="form-label small fw-semibold mb-1">Datos al</label>
+          <input type="date" id="vFecha" class="form-control form-control-sm"></div>
+        <div class="col-7"><label class="form-label small fw-semibold mb-1">Qué cambió</label>
+          <input id="vNota" class="form-control form-control-sm" placeholder="ej: datos actualizados a noviembre"></div>
+      </div>
+      <div id="vError" class="alert alert-danger small py-1 px-2 mt-2 mb-0 d-none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+      <button class="btn btn-primary btn-sm" onclick="subirVersion()">Subir</button>
+    </div>
+  </div></div>
+</div>
+
+<!-- Modal editar datos -->
+<div class="modal fade" id="modalEditar" tabindex="-1">
+  <div class="modal-dialog"><div class="modal-content">
+    <div class="modal-header">
+      <h6 class="modal-title fw-bold">Editar datos del tablero</h6>
+      <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+    </div>
+    <div class="modal-body">
+      <label class="form-label small fw-semibold mb-1">Título *</label>
+      <input id="eTitulo" class="form-control form-control-sm mb-2">
+      <label class="form-label small fw-semibold mb-1">Descripción</label>
+      <textarea id="eDesc" class="form-control form-control-sm mb-2" rows="2"></textarea>
+      <div class="row g-2">
+        <div class="col-6"><label class="form-label small fw-semibold mb-1">Modelo de origen</label>
+          <select id="eModelo" class="form-select form-select-sm"><option value="">—</option></select></div>
+        <div class="col-6"><label class="form-label small fw-semibold mb-1">Tags</label>
+          <input id="eTags" class="form-control form-control-sm"></div>
+      </div>
+      <div id="eError" class="alert alert-danger small py-1 px-2 mt-2 mb-0 d-none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+      <button class="btn btn-primary btn-sm" onclick="guardarDatos()">Guardar</button>
+    </div>
+  </div></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let T = {{ tablero | tojson }};
+const MODELOS = {{ modelos | tojson }};
+const base = `/tableros/${encodeURIComponent(T.slug)}`;
+const fecha = (iso) => iso ? iso.slice(0, 10).split('-').reverse().join('/') : null;
+const params = new URLSearchParams(location.search);
+let version = Number(params.get('version')) || T.version;
+
+function badge(texto, clase) {
+  const b = document.createElement('span'); b.className = `badge ${clase}`; b.textContent = texto; return b;
+}
+
+function render() {
+  document.title = `${T.titulo} · Tableros`;
+  document.getElementById('migaTitulo').textContent = T.titulo;
+  document.getElementById('titulo').textContent = T.titulo;
+  document.getElementById('descripcion').textContent = T.descripcion;
+  const v = T.versiones.find(x => x.version === version) || T.versiones[0];
+  const meta = document.getElementById('meta'); meta.replaceChildren();
+  if (T.modelo) {
+    const a = document.createElement('a'); a.href = `/modelos/${encodeURIComponent(T.modelo)}`;
+    a.className = 'badge text-bg-light border text-decoration-none'; a.textContent = `modelo: ${T.modelo}`;
+    meta.appendChild(a);
+  }
+  meta.appendChild(badge(T.tipo === 'vivo' ? 'vivo' : 'foto', T.tipo === 'vivo' ? 'text-bg-success' : 'text-bg-secondary'));
+  if (v.datos_hasta) meta.appendChild(badge(`datos al ${fecha(v.datos_hasta)}`, 'text-bg-light border'));
+  if (version !== T.version) meta.appendChild(badge(`viendo la versión ${version} (la última es la ${T.version})`, 'text-bg-warning'));
+  for (const t of T.tags) meta.appendChild(badge('#' + t, 'text-bg-light border fw-normal'));
+
+  const sel = document.getElementById('selVersion'); sel.replaceChildren();
+  for (const x of T.versiones) {
+    const o = document.createElement('option'); o.value = x.version;
+    o.textContent = `v${x.version} · ${fecha(x.created_at)}${x.nota ? ' · ' + x.nota : ''}`;
+    o.selected = x.version === version; sel.appendChild(o);
+  }
+  sel.classList.toggle('d-none', T.versiones.length < 2);
+
+  const url = `${base}/contenido?version=${version}`;
+  const visor = document.getElementById('visor');
+  if (visor.getAttribute('src') !== url) visor.setAttribute('src', url);
+  document.getElementById('lnkAbrir').href = url;
+  document.getElementById('lnkDescargar').href = `${url}&descargar=true`;
+}
+
+document.getElementById('selVersion').addEventListener('change', (e) => {
+  version = Number(e.target.value);
+  history.replaceState(null, '', version === T.version ? location.pathname : `?version=${version}`);
+  render();
+});
+
+// Editar
+const eModelo = document.getElementById('eModelo');
+for (const m of MODELOS) { const o = document.createElement('option'); o.value = m; o.textContent = m; eModelo.appendChild(o); }
+document.getElementById('modalEditar').addEventListener('show.bs.modal', () => {
+  document.getElementById('eTitulo').value = T.titulo;
+  document.getElementById('eDesc').value = T.descripcion;
+  eModelo.value = T.modelo;
+  document.getElementById('eTags').value = T.tags.join(', ');
+});
+async function guardarDatos() {
+  const d = await fetch(`/api/tableros/${encodeURIComponent(T.slug)}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ titulo: document.getElementById('eTitulo').value, descripcion: document.getElementById('eDesc').value,
+                           modelo: eModelo.value, tags: document.getElementById('eTags').value }),
+  }).then(r => r.json());
+  const err = document.getElementById('eError');
+  if (!d.ok) { err.textContent = d.error; err.classList.remove('d-none'); return; }
+  T = d.tablero;
+  bootstrap.Modal.getInstance(document.getElementById('modalEditar')).hide();
+  render();
+}
+
+// Nueva versión
+async function subirVersion() {
+  const err = document.getElementById('vError');
+  const f = document.getElementById('vArchivo').files[0];
+  if (!f) { err.textContent = 'Elegí un archivo.'; err.classList.remove('d-none'); return; }
+  const fd = new FormData();
+  fd.append('file', f); fd.append('datos_hasta', document.getElementById('vFecha').value);
+  fd.append('nota', document.getElementById('vNota').value);
+  const d = await fetch(`/api/tableros/${encodeURIComponent(T.slug)}/versiones`, { method: 'POST', body: fd }).then(r => r.json());
+  if (!d.ok) { err.textContent = d.error; err.classList.remove('d-none'); return; }
+  location.href = base;
+}
+
+async function eliminar() {
+  if (!confirm(`¿Eliminar el tablero «${T.titulo}» y todas sus versiones?`)) return;
+  const d = await fetch(`/api/tableros/${encodeURIComponent(T.slug)}`, { method: 'DELETE' }).then(r => r.json());
+  if (d.ok) location.href = '/tableros';
+}
+
+render();
+</script>
+{% endblock %}

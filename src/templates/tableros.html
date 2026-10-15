@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+
+{% block head %}
+<style>
+  .tableros-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+  .tablero-card { position: relative; transition: box-shadow .15s, transform .15s; }
+  .tablero-card:hover { box-shadow: 0 6px 20px rgba(15, 52, 96, .12); transform: translateY(-1px); }
+  .preview { position: relative; height: 190px; overflow: hidden; border-bottom: 1px solid #eef0f4;
+             background: #f6f7f9; border-radius: 10px 10px 0 0; }
+  .preview iframe { position: absolute; top: 0; left: 0; width: 1360px; height: 900px; border: 0;
+                    transform-origin: 0 0; pointer-events: none; background: #fff; }
+  .card-link::after { content: ""; position: absolute; inset: 0; }
+  .desc-clamp { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 2.6em; }
+  .meta { font-size: .78rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h5 class="fw-bold mb-0"><i class="bi bi-easel me-2 text-primary"></i>Tableros</h5>
+    <small class="text-muted">Dashboards armados con Claude a partir de los modelos semánticos.</small>
+  </div>
+  <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#modalPublicar">
+    <i class="bi bi-upload me-1"></i>Publicar tablero
+  </button>
+</div>
+
+<div class="d-flex gap-2 mb-3">
+  <div class="input-group input-group-sm" style="max-width:420px">
+    <span class="input-group-text"><i class="bi bi-search"></i></span>
+    <input id="buscar" class="form-control" placeholder="Buscar por título, descripción o tag">
+  </div>
+  <select id="filtroModelo" class="form-select form-select-sm" style="max-width:260px">
+    <option value="">Todos los modelos</option>
+  </select>
+</div>
+
+<div id="grilla" class="tableros-grid"></div>
+
+<!-- Modal publicar -->
+<div class="modal fade" id="modalPublicar" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title fw-bold"><i class="bi bi-upload me-2"></i>Publicar tablero</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-2">
+          <label class="form-label small fw-semibold mb-1">Archivo HTML *</label>
+          <input type="file" id="pArchivo" class="form-control form-control-sm" accept=".html,.htm">
+        </div>
+        <div class="mb-2">
+          <label class="form-label small fw-semibold mb-1">Título *</label>
+          <input id="pTitulo" class="form-control form-control-sm" placeholder="ej: NOC · Actividad">
+        </div>
+        <div class="mb-2">
+          <label class="form-label small fw-semibold mb-1">Descripción</label>
+          <textarea id="pDesc" class="form-control form-control-sm" rows="2" placeholder="Qué muestra y para quién"></textarea>
+        </div>
+        <div class="row g-2">
+          <div class="col-7">
+            <label class="form-label small fw-semibold mb-1">Modelo de origen</label>
+            <select id="pModelo" class="form-select form-select-sm"><option value="">—</option></select>
+          </div>
+          <div class="col-5">
+            <label class="form-label small fw-semibold mb-1">Datos al</label>
+            <input id="pFecha" type="date" class="form-control form-control-sm">
+          </div>
+        </div>
+        <div class="mt-2">
+          <label class="form-label small fw-semibold mb-1">Tags</label>
+          <input id="pTags" class="form-control form-control-sm" placeholder="noc, operadores, mensual">
+        </div>
+        <div class="small text-muted mt-2">
+          El tablero se muestra aislado del orquestador: puede dibujar sus gráficos pero no acceder a la app.
+        </div>
+        <div id="pError" class="alert alert-danger small py-1 px-2 mt-2 mb-0 d-none"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+        <button class="btn btn-primary btn-sm" id="btnPublicar" onclick="publicar()">Publicar</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const D = {{ datos | tojson }};
+const SANDBOX = 'allow-scripts';
+const fecha = (iso) => iso ? iso.slice(0, 10).split('-').reverse().join('/') : null;
+
+// Selects de modelo
+for (const id of ['filtroModelo', 'pModelo']) {
+  const sel = document.getElementById(id);
+  for (const m of D.modelos) { const o = document.createElement('option'); o.value = m; o.textContent = m; sel.appendChild(o); }
+}
+
+function badge(texto, clase) {
+  const b = document.createElement('span'); b.className = `badge ${clase} me-1`; b.textContent = texto; return b;
+}
+
+function tarjeta(t) {
+  const card = document.createElement('div'); card.className = 'card tablero-card';
+  const prev = document.createElement('div'); prev.className = 'preview';
+  const ifr = document.createElement('iframe');
+  ifr.setAttribute('sandbox', SANDBOX); ifr.setAttribute('loading', 'lazy'); ifr.setAttribute('tabindex', '-1');
+  ifr.setAttribute('aria-hidden', 'true'); ifr.title = `Vista previa de ${t.titulo}`;
+  ifr.src = `/tableros/${encodeURIComponent(t.slug)}/contenido`;
+  prev.appendChild(ifr);
+
+  const body = document.createElement('div'); body.className = 'card-body py-2 px-3';
+  const a = document.createElement('a'); a.href = `/tableros/${encodeURIComponent(t.slug)}`;
+  a.className = 'card-link fw-semibold text-decoration-none stretched-link'; a.textContent = t.titulo;
+  const desc = document.createElement('div'); desc.className = 'small text-muted desc-clamp mt-1';
+  desc.textContent = t.descripcion || 'Sin descripción.';
+  const meta = document.createElement('div'); meta.className = 'meta mt-2 d-flex flex-wrap align-items-center gap-1';
+  if (t.modelo) meta.appendChild(badge(t.modelo, 'text-bg-light border'));
+  meta.appendChild(badge(t.tipo === 'vivo' ? 'vivo' : 'foto', t.tipo === 'vivo' ? 'text-bg-success' : 'text-bg-secondary'));
+  if (t.datos_hasta) meta.appendChild(badge(`datos al ${fecha(t.datos_hasta)}`, 'text-bg-light border'));
+  meta.appendChild(badge(`v${t.version}`, 'text-bg-light border'));
+  const tags = document.createElement('div'); tags.className = 'meta mt-1 text-muted';
+  tags.textContent = t.tags.map(x => '#' + x).join(' ');
+  body.append(a, desc, meta, tags);
+  card.append(prev, body);
+  return card;
+}
+
+function escalar() {
+  document.querySelectorAll('.preview').forEach(p => {
+    const f = p.querySelector('iframe'); if (f) f.style.transform = `scale(${p.clientWidth / 1360})`;
+  });
+}
+
+function render() {
+  const q = document.getElementById('buscar').value.trim().toLowerCase();
+  const modelo = document.getElementById('filtroModelo').value;
+  const lista = D.tableros.filter(t => (!modelo || t.modelo === modelo) &&
+    (!q || [t.titulo, t.descripcion, ...t.tags].some(v => (v || '').toLowerCase().includes(q))));
+  const g = document.getElementById('grilla'); g.replaceChildren();
+  if (!D.tableros.length) {
+    g.innerHTML = `<div class="text-muted text-center p-5 border rounded bg-white" style="grid-column:1/-1">
+      <i class="bi bi-easel fs-1 d-block mb-2"></i>Todavía no hay tableros publicados.<br>
+      <small>Pedile a Claude un dashboard sobre un modelo semántico y publicá el HTML con <b>Publicar tablero</b>.</small></div>`;
+    return;
+  }
+  if (!lista.length) {
+    g.innerHTML = '<div class="text-muted small p-4" style="grid-column:1/-1">Ningún tablero coincide con el filtro.</div>';
+    return;
+  }
+  lista.forEach(t => g.appendChild(tarjeta(t)));
+  escalar();
+}
+
+async function publicar() {
+  const err = document.getElementById('pError');
+  const f = document.getElementById('pArchivo').files[0];
+  const titulo = document.getElementById('pTitulo').value.trim();
+  if (!f || !titulo) { err.textContent = 'Elegí un archivo y poné un título.'; err.classList.remove('d-none'); return; }
+  const fd = new FormData();
+  fd.append('file', f); fd.append('titulo', titulo);
+  fd.append('descripcion', document.getElementById('pDesc').value);
+  fd.append('modelo', document.getElementById('pModelo').value);
+  fd.append('tags', document.getElementById('pTags').value);
+  fd.append('datos_hasta', document.getElementById('pFecha').value);
+  const btn = document.getElementById('btnPublicar'); btn.disabled = true;
+  try {
+    const d = await fetch('/api/tableros', { method: 'POST', body: fd }).then(r => r.json());
+    if (!d.ok) { err.textContent = d.error; err.classList.remove('d-none'); return; }
+    location.href = `/tableros/${encodeURIComponent(d.tablero.slug)}`;
+  } finally { btn.disabled = false; }
+}
+
+document.getElementById('pArchivo').addEventListener('change', (e) => {
+  const t = document.getElementById('pTitulo');
+  if (!t.value && e.target.files[0]) t.value = e.target.files[0].name.replace(/\.html?$/i, '').replace(/[_-]+/g, ' ');
+});
+document.getElementById('buscar').addEventListener('input', render);
+document.getElementById('filtroModelo').addEventListener('change', render);
+addEventListener('resize', escalar);
+render();
+</script>
+{% endblock %}
