@@ -132,6 +132,8 @@ REGLAS: dict[tuple[str, str], str] = {
     # Tableros (versiones/edición/borrado además verifican autoría en la ruta)
     (_G, "/tableros"): "tableros.ver", (_G, "/tableros/{slug}"): "tableros.ver",
     (_G, "/tableros/{slug}/contenido"): "tableros.ver", (_G, "/api/tableros"): "tableros.ver",
+    (_P, "/api/tableros/{slug}/datos"): "tableros.ver", (_G, "/tableros/{slug}/foto"): "tableros.ver",
+    (_G, "/api/tableros/{slug}/opciones/{filtro_id}"): "tableros.ver",
     (_P, "/api/tableros"): "tableros.publicar", (_P, "/api/tableros/{slug}/versiones"): "tableros.publicar",
     (_U, "/api/tableros/{slug}"): "tableros.publicar", (_D, "/api/tableros/{slug}"): "tableros.publicar",
 }
@@ -141,5 +143,5 @@ HERRAMIENTAS_MCP: dict[str, str] = {
     "listar_modelos": "modelos.ver", "get_modelo": "modelos.ver", "buscar_campos": "modelos.ver",
     "get_yaml": "modelos.ver", "consultar": "modelos.consultar",
     "publicar_dashboard": "tableros.publicar", "listar_dashboards": "tableros.ver",
-    "obtener_dashboard": "tableros.ver",
+    "obtener_dashboard": "tableros.ver", "probar_receta": "modelos.consultar",
 }

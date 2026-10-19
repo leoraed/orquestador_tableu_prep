@@ -47,6 +47,7 @@ from src.catalog import models as _catalog_models  # noqa: F401  registra tablas
 from src.catalog.models_semantic import SemanticModel, migrar_columnas_semanticas
 from src.catalog.models_tableros import Tablero
 from src.catalog import tableros_service as _tableros
+from src.catalog import tableros_vivos as _vivos
 from src.catalog.sql_compiler import consultar as _consultar, ConsultaError
 from src.catalog import models_acceso as _models_acceso  # noqa: F401  registra tablas de acceso
 from src import usuarios as _usuarios
@@ -322,11 +323,12 @@ def get_yaml(nombre: str) -> str:
     "Parámetros:\n"
     "  modelo      — nombre exacto del modelo (obtenelo con listar_modelos).\n"
     "  metricas    — lista de nombres de métricas declaradas en el modelo.\n"
-    "  dimensiones — lista de nombres de dimensiones para agrupar.\n"
-    "  filtros     — dict {dimension: valor} para filtrar (opcional).\n"
-    "  periodo     — dict {campo, desde, hasta} (opcional). Si campo es una dimensión\n"
-    "                date/datetime (ej. Fecha), desde/hasta van en YYYY-MM o YYYY-MM-DD,\n"
-    "                ambos inclusive. Si es string (ej. mes), se compara tal cual.\n"
+    "  dimensiones — lista de nombres de dimensiones para agrupar. Una dimensión de fecha\n"
+    "                admite granularidad: 'Fecha:mes' (dia, semana, mes, trimestre, anio).\n"
+    "  filtros     — dict {dimension: valor} o {dimension: [v1, v2]} (varios valores) (opcional).\n"
+    "  periodo     — dict {campo, desde, hasta} o {campo, relativo} (opcional). desde/hasta en\n"
+    "                YYYY-MM o YYYY-MM-DD, ambos inclusive. relativo: hoy, mes_actual,\n"
+    "                mes_anterior, anio_actual, anio_anterior, ultimos_N_dias, ultimos_N_meses.\n"
     "  limite      — máximo de filas a devolver (default 1000, máx 5000)."
 ))
 @auditado
@@ -392,8 +394,23 @@ def _url_tablero(slug: str, version: int | None = None) -> str:
 @mcp.tool(description=(
     "Publica un dashboard HTML en la sección Tableros del orquestador, donde el equipo lo puede "
     "ver y compartir. Devuelve el link.\n\n"
+    "Dos tipos:\n"
+    "  - VIVO (recomendado): pasás una `receta` con las consultas y los filtros; el orquestador las "
+    "ejecuta cada vez que alguien abre el tablero y muestra una barra de filtros estándar arriba. "
+    "El HTML NO trae datos: los recibe con\n"
+    "      Tablero.alRecibirDatos(function (datos, filtros) { ... dibujar ... });\n"
+    "    datos = {nombre_consulta: {columnas: [...], filas: [[...]], error}}; Tablero.filas(datos.x) "
+    "las da como objetos. filtros = {id: {valor, etiqueta, texto}} (mostrá filtros.periodo.texto). "
+    "Se llama de nuevo cada vez que cambian los filtros: el dibujo tiene que poder rehacerse. "
+    "El objeto Tablero lo inyecta el orquestador; no lo definas.\n"
+    "    Receta: {\"modelo\": m, \"filtros\": [{\"id\": \"periodo\", \"tipo\": \"periodo\", \"campo\": \"Fecha\", "
+    "\"default\": \"ultimos_12_meses\"}, {\"id\": \"prov\", \"tipo\": \"dimension\", \"dimension\": \"Provincia\", "
+    "\"multiple\": true}], \"consultas\": {\"mensual\": {\"metricas\": [...], \"dimensiones\": [\"Fecha:mes\"], "
+    "\"filtros\": {\"Provincia\": \"$prov\", \"Cliente Id\": \"73\"}, \"periodo\": \"$periodo\"}}}. "
+    "\"$id\" usa el valor del filtro; un período fijo va con \"campo_periodo\". Probala antes con probar_receta.\n"
+    "  - FOTO: sin receta, el HTML trae los datos embebidos (sacados con consultar()) y no se actualiza.\n\n"
     "Requisitos del HTML (se muestra en un iframe aislado del orquestador):\n"
-    "  - Un solo archivo autocontenido, con los datos embebidos (los sacás con consultar()).\n"
+    "  - Un solo archivo autocontenido.\n"
     "  - NO usar localStorage, sessionStorage, cookies ni IndexedDB: están bloqueados.\n"
     "  - NO llamar a la API del orquestador ni a la del MCP: está bloqueado. Sí se pueden cargar "
     "librerías desde CDNs públicos, aunque es preferible no depender de ellos.\n"
@@ -409,7 +426,8 @@ def _url_tablero(slug: str, version: int | None = None) -> str:
     "  tags        — separados por coma, ej: 'noc, operadores, mensual'.\n"
     "  datos_hasta — fecha del último dato incluido, AAAA-MM-DD.\n"
     "  actualizar  — slug de un tablero existente para publicar una versión nueva.\n"
-    "  nota        — qué cambió en esta versión (al actualizar)."
+    "  nota        — qué cambió en esta versión (al actualizar).\n"
+    "  receta      — consultas y filtros (tablero vivo). Sin receta, el tablero es una foto."
 ))
 @auditado
 def publicar_dashboard(
@@ -421,6 +439,7 @@ def publicar_dashboard(
     datos_hasta: str = "",
     actualizar: str = "",
     nota: str = "",
+    receta: dict | None = None,
 ) -> str:
     u = _usuario()
     if u is None:
@@ -429,6 +448,17 @@ def publicar_dashboard(
     try:
         if modelo and not db.query(SemanticModel).filter(SemanticModel.name == modelo).first():
             return f"Error: el modelo «{modelo}» no existe. Usá listar_modelos para ver los nombres exactos."
+        if receta:
+            receta = _vivos.validar_receta(db, receta)
+            if "Tablero.alRecibirDatos" not in html:
+                return ("Error: un tablero vivo tiene que recibir los datos con "
+                        "Tablero.alRecibirDatos(function (datos, filtros) {...}); el HTML no lo usa.")
+            prueba = _vivos.ejecutar(receta, _vivos.valores_efectivos(receta, {}), consultar_fn=_consultar)
+            errores = {k: d["error"] for k, d in prueba["datos"].items() if d["error"]}
+            if errores:
+                return "Error: no publiqué; estas consultas fallan con los filtros por defecto:\n" + \
+                       "\n".join(f"  - {k}: {e}" for k, e in errores.items())
+            modelo = modelo or receta.get("modelo") or ""
         if actualizar:
             t = _tableros.buscar(db, actualizar)
             if not t:
@@ -440,14 +470,18 @@ def publicar_dashboard(
             if titulo or descripcion or modelo or tags:
                 _tableros.editar(t, titulo or t.titulo, descripcion or (t.descripcion or ""),
                                  modelo or (t.modelo or ""), tags or (t.tags or ""))
-            _tableros.nueva_version(db, t, html, datos_hasta, nota or "Publicado desde Claude", autor=u.nombre)
+            _tableros.nueva_version(db, t, html, datos_hasta, nota or "Publicado desde Claude", autor=u.nombre,
+                                    receta=receta or _vivos.receta_heredada(t, html))
+            receta = t.ultima.receta
             accion = f"Publiqué la versión {t.ultima.version} de «{t.titulo}»"
         else:
             t = _tableros.crear(db, titulo, html, descripcion, modelo, tags, datos_hasta,
-                                nota="Publicado desde Claude", autor=u.nombre)
+                                nota="Publicado desde Claude", autor=u.nombre, receta=receta or None)
             accion = f"Publiqué el tablero «{t.titulo}»"
         db.commit()
-        return f"{accion}.\nLink: {_url_tablero(t.slug)}\nSlug: {t.slug} (usalo en `actualizar` para nuevas versiones)."
+        tipo = "vivo: se actualiza al abrirlo" if receta else "foto: los datos quedan fijos"
+        return (f"{accion} ({tipo}).\nLink: {_url_tablero(t.slug)}\n"
+                f"Slug: {t.slug} (usalo en `actualizar` para nuevas versiones).")
     except _tableros.TableroError as e:
         db.rollback()
         return f"Error: {e}"
@@ -499,9 +533,40 @@ def obtener_dashboard(slug: str, version: int = 0) -> str:
         cabecera = (f"Tablero «{t.titulo}» (`{t.slug}`), versión {v.version} de {info['version']}"
                     + (f", datos al {v.datos_hasta.isoformat()}" if v.datos_hasta else "")
                     + (f", modelo {t.modelo}" if t.modelo else "") + ".")
-        return f"{cabecera}\n\n```html\n{v.html}\n```"
+        receta = (f"\n\nReceta (tablero vivo):\n```json\n{json.dumps(v.receta, ensure_ascii=False, indent=1)}\n```"
+                  if v.receta else "")
+        return f"{cabecera}{receta}\n\n```html\n{v.html}\n```"
     finally:
         db.close()
+
+
+@mcp.tool(description=(
+    "Ejecuta una receta de tablero vivo sin publicarla y muestra qué devuelve cada consulta "
+    "(columnas, cantidad de filas y las primeras filas). Usala para armar y verificar la receta "
+    "antes de publicar_dashboard. `valores` permite probar filtros distintos de los por defecto, "
+    "ej. {\"periodo\": \"ultimos_3_meses\", \"prov\": [\"Córdoba\"]}."
+))
+@auditado
+def probar_receta(receta: dict, valores: dict | None = None) -> str:
+    db = SessionCatalog()
+    try:
+        receta = _vivos.validar_receta(db, receta)
+    except _tableros.TableroError as e:
+        return f"Error en la receta: {e}"
+    finally:
+        db.close()
+    vals = _vivos.valores_efectivos(receta, valores)
+    r = _vivos.ejecutar(receta, vals, consultar_fn=_consultar)
+    lineas = ["Filtros usados: " + json.dumps(vals, ensure_ascii=False)]
+    for nombre, d in r["datos"].items():
+        if d["error"]:
+            lineas.append(f"\n### {nombre}: ERROR\n{d['error']}")
+            continue
+        lineas.append(f"\n### {nombre}: {len(d['filas'])} filas\n" + " | ".join(d["columnas"]))
+        lineas += [" | ".join(str(x) for x in f) for f in d["filas"][:8]]
+        if len(d["filas"]) > 8:
+            lineas.append(f"… ({len(d['filas']) - 8} filas más)")
+    return "\n".join(lineas)
 
 
 # ── run ───────────────────────────────────────────────────────────────────────

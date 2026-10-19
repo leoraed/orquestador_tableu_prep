@@ -2,6 +2,9 @@
 
 {% block head %}
 <style>
+  .barra-filtros { background: #fff; border: 1px solid #e3e6ec; border-radius: 10px; padding: 8px 12px; }
+  .barra-filtros .form-label { font-size: .72rem; color: #6c757d; margin-bottom: 2px; }
+  .filtro-dim .dropdown-menu { max-height: 340px; overflow-y: auto; min-width: 260px; }
   .visor { width: 100%; height: calc(100vh - 210px); min-height: 520px; border: 1px solid #e3e6ec;
            border-radius: 10px; background: #fff; }
 </style>
@@ -43,6 +46,8 @@
   </div>
 </div>
 
+<div id="barraFiltros" class="barra-filtros d-none d-flex flex-wrap gap-3 align-items-end mb-2"></div>
+<div id="avisoDatos" class="alert alert-warning small py-1 px-2 mb-2 d-none"></div>
 <iframe id="visor" class="visor" sandbox="{{ sandbox }}" title="Tablero"></iframe>
 
 <!-- Modal nueva versión -->
@@ -139,9 +144,204 @@ function render() {
 
   const url = `${base}/contenido?version=${version}`;
   const visor = document.getElementById('visor');
-  if (visor.getAttribute('src') !== url) visor.setAttribute('src', url);
+  if (visor.getAttribute('src') !== url) { iframeListo = false; visor.setAttribute('src', url); }
+  receta = v.receta || null;
+  document.getElementById('lnkAbrir').classList.toggle('d-none', !!receta);   // sin el visor no recibe datos
   document.getElementById('lnkAbrir').href = url;
-  document.getElementById('lnkDescargar').href = `${url}&descargar=true`;
+  actualizarDescarga();
+  if (receta) iniciarVivo(); else document.getElementById('barraFiltros').classList.add('d-none');
+}
+
+// ── Tablero vivo: filtros y datos ────────────────────────────────────────────
+// El tablero está aislado (no puede llamar a la API): el visor pide los datos y se los pasa por postMessage.
+let receta = null, valores = {}, iframeListo = false, ultimoMensaje = null, pedido = 0;
+const PRESETS = [['ultimos_3_meses', 'Últimos 3 meses'], ['ultimos_6_meses', 'Últimos 6 meses'],
+                 ['ultimos_12_meses', 'Últimos 12 meses'], ['mes_actual', 'Este mes'], ['mes_anterior', 'Mes anterior'],
+                 ['anio_actual', 'Este año'], ['anio_anterior', 'Año anterior']];
+function etiquetaPeriodo(v) {
+  const p = PRESETS.find(x => x[0] === v);
+  if (p) return p[1];
+  const m = /^ultimos_(\d+)_(dias|meses)$/.exec(v);
+  return m ? `Últimos ${m[1]} ${m[2] === 'dias' ? 'días' : 'meses'}` : v;
+}
+const visorEl = () => document.getElementById('visor');
+
+window.addEventListener('message', (e) => {
+  if (e.source !== visorEl().contentWindow || (e.data || {}).tipo !== 'orquestador:listo') return;
+  iframeListo = true;
+  if (ultimoMensaje) enviar(ultimoMensaje);
+});
+function enviar(m) { if (iframeListo) visorEl().contentWindow.postMessage(m, '*'); }
+
+function valoresDesdeUrl() {
+  const p = new URLSearchParams(location.search), out = {};
+  for (const f of receta.filtros || []) {
+    const raw = p.get('f_' + f.id);
+    if (raw == null) continue;
+    if (f.tipo === 'periodo') {
+      const m = /^(\d{4}-\d{2})\.\.(\d{4}-\d{2})$/.exec(raw);
+      out[f.id] = m ? { desde: m[1], hasta: m[2] } : raw;
+    } else out[f.id] = f.multiple ? raw.split('|').filter(Boolean) : raw;
+  }
+  return out;
+}
+
+function valoresAUrl() {
+  const p = new URLSearchParams(location.search);
+  for (const f of receta.filtros || []) {
+    const v = valores[f.id];
+    if (JSON.stringify(v ?? null) === JSON.stringify(f.default ?? null)) { p.delete('f_' + f.id); continue; }
+    p.set('f_' + f.id, f.tipo === 'periodo' ? (typeof v === 'string' ? v : `${v.desde}..${v.hasta}`)
+                                             : (Array.isArray(v) ? v.join('|') : (v || '')));
+  }
+  const q = p.toString();
+  history.replaceState(null, '', location.pathname + (q ? '?' + q : ''));
+}
+
+function actualizarDescarga() {
+  const a = document.getElementById('lnkDescargar');
+  a.href = receta ? `${base}/foto?version=${version}&valores=${encodeURIComponent(JSON.stringify(valores))}`
+                  : `${base}/contenido?version=${version}&descargar=true`;
+  a.title = receta ? 'Descargar con los datos actuales (funciona sin el orquestador)' : 'Descargar HTML';
+}
+
+function iniciarVivo() {
+  valores = {};
+  for (const f of receta.filtros || []) valores[f.id] = JSON.parse(JSON.stringify(f.default ?? (f.multiple ? [] : null)));
+  Object.assign(valores, valoresDesdeUrl());
+  dibujarBarra();
+  actualizarDescarga();
+  cargarDatos(false);
+}
+
+function el(tag, cls, texto) { const e = document.createElement(tag); if (cls) e.className = cls; if (texto != null) e.textContent = texto; return e; }
+
+function dibujarBarra() {
+  const barra = document.getElementById('barraFiltros'); barra.replaceChildren();
+  barra.classList.remove('d-none');
+  for (const f of receta.filtros || []) barra.appendChild(f.tipo === 'periodo' ? filtroPeriodo(f) : filtroDimension(f));
+  const der = el('div', 'ms-auto d-flex align-items-center gap-2 small text-muted');
+  const estado = el('span', '', ''); estado.id = 'estadoDatos';
+  const refrescar = el('button', 'btn btn-link btn-sm p-0', 'Actualizar');
+  refrescar.title = 'Volver a consultar el DW (sin usar la caché)'; refrescar.onclick = () => cargarDatos(true);
+  const reset = el('button', 'btn btn-link btn-sm p-0', 'Restablecer filtros');
+  reset.onclick = () => {
+    history.replaceState(null, '', location.pathname + (version !== T.version ? `?version=${version}` : ''));
+    iniciarVivo();
+  };
+  der.append(estado, refrescar, reset);
+  barra.appendChild(der);
+}
+
+function cambiar(id, valor) { valores[id] = valor; valoresAUrl(); actualizarDescarga(); cargarDatos(false); }
+
+function filtroPeriodo(f) {
+  const w = el('div', ''); w.appendChild(el('label', 'form-label d-block', f.etiqueta));
+  const fila = el('div', 'd-flex gap-1');
+  const sel = el('select', 'form-select form-select-sm'); sel.style.width = 'auto';
+  const v = valores[f.id];
+  const opciones = [...PRESETS];
+  for (const extra of [f.default, v]) {
+    if (typeof extra === 'string' && !opciones.some(p => p[0] === extra)) opciones.unshift([extra, etiquetaPeriodo(extra)]);
+  }
+  for (const [k, txt] of [...opciones, ['__rango', 'Rango de meses…']]) {
+    const o = el('option', '', txt); o.value = k; o.selected = typeof v === 'string' ? k === v : k === '__rango'; sel.appendChild(o);
+  }
+  const desde = el('input', 'form-control form-control-sm'), hasta = el('input', 'form-control form-control-sm');
+  for (const [inp, k] of [[desde, 'desde'], [hasta, 'hasta']]) {
+    inp.type = 'month'; inp.style.width = '150px'; inp.title = k;
+    inp.value = v && typeof v === 'object' ? (v[k] || '').slice(0, 7) : '';
+    inp.classList.toggle('d-none', typeof v === 'string');
+    inp.onchange = () => { if (desde.value && hasta.value) cambiar(f.id, { desde: desde.value, hasta: hasta.value }); };
+  }
+  sel.onchange = () => {
+    const rango = sel.value === '__rango';
+    desde.classList.toggle('d-none', !rango); hasta.classList.toggle('d-none', !rango);
+    if (!rango) cambiar(f.id, sel.value);
+  };
+  fila.append(sel, desde, hasta); w.appendChild(fila);
+  return w;
+}
+
+function filtroDimension(f) {
+  const w = el('div', 'filtro-dim dropdown'); w.appendChild(el('label', 'form-label d-block', f.etiqueta));
+  const btn = el('button', 'btn btn-outline-secondary btn-sm dropdown-toggle text-start'); btn.style.minWidth = '170px';
+  btn.setAttribute('data-bs-toggle', 'dropdown'); btn.setAttribute('data-bs-auto-close', 'outside');
+  const texto = () => {
+    const v = valores[f.id];
+    return f.multiple ? (v && v.length ? (v.length === 1 ? v[0] : `${v.length} seleccionados`) : 'Todos') : (v || 'Todos');
+  };
+  btn.textContent = texto();
+  const menu = el('div', 'dropdown-menu p-2');
+  const buscar = el('input', 'form-control form-control-sm mb-2'); buscar.placeholder = 'Buscar…';
+  const lista = el('div', ''); lista.appendChild(el('div', 'small text-muted', 'Cargando opciones…'));
+  const pie = el('div', 'd-flex justify-content-between mt-2 pt-2 border-top');
+  const limpiar = el('button', 'btn btn-link btn-sm p-0', 'Todos');
+  const aplicar = el('button', 'btn btn-primary btn-sm', 'Aplicar');
+  pie.append(limpiar, aplicar); menu.append(buscar, lista, pie);
+  w.append(btn, menu);
+  let opciones = null;
+  let seleccion = new Set();
+
+  const pintar = () => {
+    lista.replaceChildren();
+    const q = buscar.value.trim().toLowerCase();
+    const vis = opciones.filter(o => !q || String(o).toLowerCase().includes(q)).slice(0, 300);
+    vis.forEach((o, i) => {
+      const id = `op-${f.id}-${i}`;
+      const fila = el('div', 'form-check small');
+      const c = el('input', 'form-check-input'); c.type = f.multiple ? 'checkbox' : 'radio'; c.name = 'op-' + f.id; c.id = id;
+      c.checked = seleccion.has(String(o));
+      c.onchange = () => { if (!f.multiple) seleccion.clear(); c.checked ? seleccion.add(String(o)) : seleccion.delete(String(o)); };
+      const l = el('label', 'form-check-label', String(o)); l.htmlFor = id;
+      fila.append(c, l); lista.appendChild(fila);
+    });
+    if (!vis.length) lista.appendChild(el('div', 'small text-muted', 'Sin opciones.'));
+  };
+  w.addEventListener('show.bs.dropdown', async () => {
+    const v = valores[f.id];
+    seleccion = new Set(f.multiple ? (v || []) : (v ? [v] : []));
+    if (opciones === null) {
+      const d = await fetch(`/api/tableros/${encodeURIComponent(T.slug)}/opciones/${encodeURIComponent(f.id)}?version=${version}`)
+        .then(r => r.json());
+      if (!d.ok) { lista.replaceChildren(el('div', 'small text-danger', d.error)); return; }
+      opciones = d.valores;
+    }
+    pintar();
+  });
+  buscar.oninput = () => { if (opciones) pintar(); };
+  limpiar.onclick = () => { seleccion.clear(); if (opciones) pintar(); };
+  aplicar.onclick = () => {
+    const sel = [...seleccion];
+    cambiar(f.id, f.multiple ? sel : (sel[0] || null));
+    btn.textContent = texto();
+    bootstrap.Dropdown.getOrCreateInstance(btn).hide();
+  };
+  return w;
+}
+
+async function cargarDatos(refrescar) {
+  const id = ++pedido;
+  const estado = document.getElementById('estadoDatos');
+  if (estado) estado.textContent = 'Consultando…';
+  enviar({ tipo: 'orquestador:cargando' });
+  try {
+    const d = await fetch(`/api/tableros/${encodeURIComponent(T.slug)}/datos`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ version, valores, refrescar }),
+    }).then(r => r.json());
+    if (id !== pedido) return;            // llegó la respuesta de un pedido anterior: se descarta
+    const aviso = document.getElementById('avisoDatos');
+    if (!d.ok) { aviso.textContent = d.error; aviso.classList.remove('d-none'); return; }
+    const errores = Object.entries(d.mensaje.datos).filter(([, x]) => x.error);
+    aviso.textContent = errores.length ? 'Algunas consultas fallaron: ' + errores.map(([k, x]) => `${k}: ${x.error}`).join(' · ') : '';
+    aviso.classList.toggle('d-none', !errores.length);
+    ultimoMensaje = d.mensaje;
+    enviar(ultimoMensaje);
+    if (estado) estado.textContent = `Datos de las ${(d.mensaje.consultado || '').slice(11, 16)}${d.desde_cache ? ' (caché)' : ''} ·`;
+  } catch (e) {
+    if (estado) estado.textContent = 'No se pudo consultar ·';
+  }
 }
 
 document.getElementById('selVersion').addEventListener('change', (e) => {

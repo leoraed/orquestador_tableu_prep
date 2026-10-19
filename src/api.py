@@ -1594,7 +1594,9 @@ async def api_importar_yaml(file: UploadFile = File(...), db: Session = Depends(
 # La lógica vive en tableros_service (la comparte el servidor MCP).
 
 from fastapi.responses import HTMLResponse
+import json
 from src.catalog import tableros_service as _tableros
+from src.catalog import tableros_vivos as _vivos
 from src.catalog.models_tableros import Tablero
 
 _SANDBOX = _tableros.SANDBOX
@@ -1668,7 +1670,55 @@ def contenido_tablero(slug: str, version: int | None = None, descargar: bool = F
     }
     if descargar:
         headers["Content-Disposition"] = f'attachment; filename="{t.slug}_v{v.version}.html"'
-    return HTMLResponse(v.html, headers=headers)
+    html = _vivos.inyectar_sdk(v.html) if v.receta else v.html
+    return HTMLResponse(html, headers=headers)
+
+
+def _version_viva(db: Session, slug: str, version: int | None):
+    t = _tablero_o_404(db, slug)
+    v = next((x for x in t.versiones if x.version == version), None) if version else t.ultima
+    if v is None or not v.receta:
+        raise _acceso_web.AccesoDenegado(404, "Esa versión del tablero no es un tablero vivo.")
+    return t, v
+
+
+@app.post("/api/tableros/{slug}/datos")
+async def api_datos_tablero(slug: str, request: Request, db: Session = Depends(get_catalog_db)):
+    """Ejecuta la receta del tablero con los filtros pedidos (los no declarados se ignoran)."""
+    data = await request.json()
+    t, v = _version_viva(db, slug, data.get("version"))
+    valores = _vivos.valores_efectivos(v.receta, data.get("valores"))
+    resultado = _vivos.ejecutar(v.receta, valores, clave_cache=f"{t.slug}:{v.version}",
+                                refrescar=bool(data.get("refrescar")), consultar_fn=_consultar_dw)
+    return JSONResponse(jsonable_encoder({"ok": True, "valores": valores, "desde_cache": resultado["desde_cache"],
+                                          "mensaje": _vivos.mensaje_datos(resultado, valores, v.receta)}))
+
+
+@app.get("/api/tableros/{slug}/opciones/{filtro_id}")
+def api_opciones_filtro(slug: str, filtro_id: str, version: int | None = None,
+                        db: Session = Depends(get_catalog_db)):
+    _, v = _version_viva(db, slug, version)
+    try:
+        valores = _vivos.opciones_filtro(v.receta, filtro_id, consultar_fn=_consultar_dw)
+    except (_tableros.TableroError, ConsultaError) as e:
+        return JSONResponse({"ok": False, "error": str(e)})
+    return JSONResponse(jsonable_encoder({"ok": True, "valores": valores}))
+
+
+@app.get("/tableros/{slug}/foto")
+def foto_tablero(slug: str, version: int | None = None, valores: str = "", db: Session = Depends(get_catalog_db)):
+    """Descarga el tablero vivo con los datos actuales adentro: funciona sin el orquestador."""
+    t, v = _version_viva(db, slug, version)
+    try:
+        pedidos = json.loads(valores) if valores else {}
+    except ValueError:
+        pedidos = {}
+    vals = _vivos.valores_efectivos(v.receta, pedidos if isinstance(pedidos, dict) else {})
+    resultado = _vivos.ejecutar(v.receta, vals, clave_cache=f"{t.slug}:{v.version}", consultar_fn=_consultar_dw)
+    mensaje = jsonable_encoder(_vivos.mensaje_datos(resultado, vals, v.receta))
+    return HTMLResponse(_vivos.inyectar_sdk(v.html, datos_iniciales=mensaje), headers={
+        "Content-Security-Policy": f"sandbox {_SANDBOX}", "X-Content-Type-Options": "nosniff",
+        "Content-Disposition": f'attachment; filename="{t.slug}_{_dt.utcnow():%Y%m%d}.html"'})
 
 
 @app.get("/api/tableros")
@@ -1697,8 +1747,9 @@ async def api_nueva_version_tablero(slug: str, request: Request, file: UploadFil
                                     db: Session = Depends(get_catalog_db)):
     t = _tablero_propio(request, db, slug)
     try:
-        _tableros.nueva_version(db, t, await _leer_html(file), datos_hasta, nota,
-                                autor=_acceso_web.usuario_actual(request).nombre)
+        html = await _leer_html(file)
+        _tableros.nueva_version(db, t, html, datos_hasta, nota, autor=_acceso_web.usuario_actual(request).nombre,
+                                receta=_vivos.receta_heredada(t, html))
     except _tableros.TableroError as e:
         return JSONResponse({"ok": False, "error": str(e)})
     db.commit()

@@ -5,7 +5,7 @@ Cada publicación es una versión; el tablero apunta a la última.
 from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Date, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -49,6 +49,8 @@ class TableroVersion(BaseCatalog):
     datos_hasta: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     nota: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)    # qué cambió en esta versión
     autor: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # Tablero vivo: consultas y filtros que el orquestador ejecuta al abrirlo (None = foto)
+    receta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     tablero: Mapped["Tablero"] = relationship(back_populates="versiones")

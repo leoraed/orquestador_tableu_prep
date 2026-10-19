@@ -128,6 +128,53 @@ def _bound_date(valor: str, es_hasta: bool) -> str:
     return d.isoformat()
 
 
+# Granularidad de fechas: "Fecha:mes" agrupa la dimensión Fecha por mes
+GRANOS = {
+    "dia": "DATE({e})",
+    "semana": "DATE_SUB(DATE({e}), INTERVAL WEEKDAY({e}) DAY)",      # lunes de la semana
+    "mes": "DATE_FORMAT({e}, '%Y-%m')",
+    "trimestre": "CONCAT(YEAR({e}), '-T', QUARTER({e}))",
+    "anio": "YEAR({e})",
+}
+
+_RELATIVO_RE = re.compile(r"^ultimos_(\d{1,3})_(dias|meses)$")
+PERIODOS_RELATIVOS = ["hoy", "mes_actual", "mes_anterior", "anio_actual", "anio_anterior",
+                      "ultimos_N_dias", "ultimos_N_meses"]
+
+
+def resolver_periodo_relativo(texto: str, hoy: date | None = None) -> tuple[str, str]:
+    """
+    Período relativo → (desde, hasta) en YYYY-MM-DD, ambos inclusive.
+    ultimos_N_meses incluye el mes actual: ultimos_12_meses en octubre = noviembre del año anterior a hoy.
+    """
+    hoy = hoy or date.today()
+    inicio_mes = hoy.replace(day=1)
+
+    def meses_atras(d: date, n: int) -> date:
+        m = d.year * 12 + d.month - 1 - n
+        return date(m // 12, m % 12 + 1, 1)
+
+    t = (texto or "").strip().lower()
+    if t == "hoy":
+        return hoy.isoformat(), hoy.isoformat()
+    if t == "mes_actual":
+        return inicio_mes.isoformat(), hoy.isoformat()
+    if t == "mes_anterior":
+        d = meses_atras(inicio_mes, 1)
+        return d.isoformat(), (inicio_mes - timedelta(days=1)).isoformat()
+    if t == "anio_actual":
+        return date(hoy.year, 1, 1).isoformat(), hoy.isoformat()
+    if t == "anio_anterior":
+        return date(hoy.year - 1, 1, 1).isoformat(), date(hoy.year - 1, 12, 31).isoformat()
+    m = _RELATIVO_RE.match(t)
+    if m and int(m.group(1)) > 0:
+        n = int(m.group(1))
+        if m.group(2) == "dias":
+            return (hoy - timedelta(days=n - 1)).isoformat(), hoy.isoformat()
+        return meses_atras(inicio_mes, n - 1).isoformat(), hoy.isoformat()
+    raise ConsultaError(f"Período relativo inválido: {texto!r}. Opciones: {', '.join(PERIODOS_RELATIVOS)}.")
+
+
 def _from_sql(entity) -> str:
     """FROM + JOINs de la entidad."""
     sql = f"FROM `{entity.base_table}`\n"
@@ -154,14 +201,21 @@ def _build_sql(entity, dim_map, met_map, dimensiones, metricas, filtros, periodo
         selects.append(f"  {_esc(dim_map[d].expression)} AS `{_esc(d)}`")
     for m in metricas:
         selects.append(f"  {_esc(met_map[m].expression)} AS `{_esc(m)}`")
-    sql = "SELECT\n" + ",\n".join(selects) + "\n"
+    # Solo dimensiones (sin métricas): valores distintos, ej. las opciones de un filtro
+    sql = ("SELECT DISTINCT\n" if dimensiones and not metricas else "SELECT\n") + ",\n".join(selects) + "\n"
     sql += _from_sql(entity)
 
     # WHERE
     where = []
     for campo, valor in (filtros or {}).items():
-        where.append(f"  {_esc(dim_map[campo].expression)} = %s")
-        params.append(valor)
+        if isinstance(valor, (list, tuple)):
+            if not valor:          # lista vacía = sin filtro
+                continue
+            where.append(f"  {_esc(dim_map[campo].expression)} IN ({', '.join(['%s'] * len(valor))})")
+            params.extend(valor)
+        else:
+            where.append(f"  {_esc(dim_map[campo].expression)} = %s")
+            params.append(valor)
 
     if periodo:
         campo = periodo.get("campo")
@@ -190,9 +244,11 @@ def _build_sql(entity, dim_map, met_map, dimensiones, metricas, filtros, periodo
         sql += "WHERE\n" + "\n  AND ".join(where) + "\n"
 
     # GROUP BY (solo si hay métricas — son agregados)
-    if metricas and dimensiones:
+    if dimensiones:
         group_exprs = [_esc(dim_map[d].expression) for d in dimensiones]
-        sql += "GROUP BY\n  " + ",\n  ".join(group_exprs) + "\n"
+        if metricas:
+            sql += "GROUP BY\n  " + ",\n  ".join(group_exprs) + "\n"
+        sql += "ORDER BY\n  " + ",\n  ".join(group_exprs) + "\n"
 
     # LIMIT
     sql += "LIMIT %s"
@@ -216,9 +272,13 @@ def consultar(
     Args:
         modelo:      Nombre del SemanticModel.
         metricas:    Lista de nombres de métricas declaradas en el modelo.
-        dimensiones: Lista de nombres de dimensiones declaradas en el modelo.
-        filtros:     {"dimension": valor} — solo dimensiones del modelo.
-        periodo:     {"campo": "Fecha", "desde": "2024-01", "hasta": "2024-12"}
+        dimensiones: Lista de nombres de dimensiones declaradas en el modelo. Una
+                     dimensión de fecha admite granularidad: "Fecha:mes" (dia, semana,
+                     mes, trimestre, anio).
+        filtros:     {"dimension": valor} o {"dimension": [v1, v2]} (IN) — solo
+                     dimensiones del modelo. Una lista vacía no filtra.
+        periodo:     {"campo": "Fecha", "desde": "2024-01", "hasta": "2024-12"} o
+                     {"campo": "Fecha", "relativo": "ultimos_12_meses"}.
                      Si el campo es date/datetime acepta YYYY-MM o YYYY-MM-DD
                      (ambos extremos inclusive); si no, compara el valor tal cual.
         limite:      Máximo de filas (tope: DW_MAX_ROWS).
@@ -257,6 +317,25 @@ def consultar(
                 name=nombre, expression=o["expression"], data_type=o.get("data_type"))
         for nombre, o in ((overrides or {}).get("metricas") or {}).items():
             met_map[nombre] = SimpleNamespace(name=nombre, expression=o["expression"])
+
+        # Dimensiones con granularidad ("Fecha:mes"): se arman sobre la dimensión de fecha
+        for d in dimensiones:
+            if ":" not in d or d in dim_map:
+                continue
+            base, grano = d.rsplit(":", 1)
+            if base not in dim_map:
+                continue          # lo informa la validación de abajo
+            if grano not in GRANOS:
+                raise ConsultaError(f"Granularidad inválida en '{d}'. Opciones: {', '.join(GRANOS)}.")
+            if (dim_map[base].data_type or "").lower() not in _DATE_TYPES:
+                raise ConsultaError(f"'{base}' no es una dimensión de fecha: no admite ':{grano}'.")
+            dim_map[d] = SimpleNamespace(name=d, data_type="string",
+                                         expression=GRANOS[grano].format(e=dim_map[base].expression))
+
+        # Período relativo ("ultimos_12_meses") → fechas concretas
+        if periodo and periodo.get("relativo"):
+            desde, hasta = resolver_periodo_relativo(periodo["relativo"])
+            periodo = {"campo": periodo.get("campo"), "desde": desde, "hasta": hasta}
 
         # ── Validaciones ─────────────────────────────────────────────────────
         bad_mets = [x for x in metricas if x not in met_map]

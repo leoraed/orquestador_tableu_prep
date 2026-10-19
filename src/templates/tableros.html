@@ -106,11 +106,22 @@ function badge(texto, clase) {
 function tarjeta(t) {
   const card = document.createElement('div'); card.className = 'card tablero-card';
   const prev = document.createElement('div'); prev.className = 'preview';
-  const ifr = document.createElement('iframe');
-  ifr.setAttribute('sandbox', SANDBOX); ifr.setAttribute('loading', 'lazy'); ifr.setAttribute('tabindex', '-1');
-  ifr.setAttribute('aria-hidden', 'true'); ifr.title = `Vista previa de ${t.titulo}`;
-  ifr.src = `/tableros/${encodeURIComponent(t.slug)}/contenido`;
-  prev.appendChild(ifr);
+  const receta = t.versiones[0]?.receta;
+  if (receta) {
+    // Un tablero vivo recibe los datos del visor: en la galería se muestra una portada
+    prev.classList.add('d-flex', 'flex-column', 'align-items-center', 'justify-content-center', 'text-muted', 'gap-1');
+    const ic = document.createElement('i'); ic.className = 'bi bi-broadcast fs-2 text-success';
+    const tx = document.createElement('div'); tx.className = 'small fw-semibold'; tx.textContent = 'Tablero vivo · datos al abrirlo';
+    const fl = document.createElement('div'); fl.className = 'small';
+    fl.textContent = (receta.filtros || []).length ? 'Filtros: ' + receta.filtros.map(f => f.etiqueta).join(', ') : 'Sin filtros';
+    prev.append(ic, tx, fl);
+  } else {
+    const ifr = document.createElement('iframe');
+    ifr.setAttribute('sandbox', SANDBOX); ifr.setAttribute('loading', 'lazy'); ifr.setAttribute('tabindex', '-1');
+    ifr.setAttribute('aria-hidden', 'true'); ifr.title = `Vista previa de ${t.titulo}`;
+    ifr.src = `/tableros/${encodeURIComponent(t.slug)}/contenido`;
+    prev.appendChild(ifr);
+  }
 
   const body = document.createElement('div'); body.className = 'card-body py-2 px-3';
   const a = document.createElement('a'); a.href = `/tableros/${encodeURIComponent(t.slug)}`;
