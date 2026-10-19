@@ -427,7 +427,11 @@ def _url_tablero(slug: str, version: int | None = None) -> str:
     "  datos_hasta — fecha del último dato incluido, AAAA-MM-DD.\n"
     "  actualizar  — slug de un tablero existente para publicar una versión nueva.\n"
     "  nota        — qué cambió en esta versión (al actualizar).\n"
-    "  receta      — consultas y filtros (tablero vivo). Sin receta, el tablero es una foto."
+    "  receta      — consultas y filtros (tablero vivo). Sin receta, el tablero es una foto.\n"
+    "  pedido      — SIEMPRE: lo que pidió el usuario para esta versión, lo más fiel posible a sus palabras.\n"
+    "  decisiones  — SIEMPRE: definiciones y supuestos que tomaste (cómo se calcula cada métrica, qué se\n"
+    "                filtró o excluyó y por qué, limitaciones de los datos). Queda visible en «Cómo se armó»\n"
+    "                para quien vea el tablero y para quien lo modifique después."
 ))
 @auditado
 def publicar_dashboard(
@@ -440,6 +444,8 @@ def publicar_dashboard(
     actualizar: str = "",
     nota: str = "",
     receta: dict | None = None,
+    pedido: str = "",
+    decisiones: str = "",
 ) -> str:
     u = _usuario()
     if u is None:
@@ -471,17 +477,22 @@ def publicar_dashboard(
                 _tableros.editar(t, titulo or t.titulo, descripcion or (t.descripcion or ""),
                                  modelo or (t.modelo or ""), tags or (t.tags or ""))
             _tableros.nueva_version(db, t, html, datos_hasta, nota or "Publicado desde Claude", autor=u.nombre,
-                                    receta=receta or _vivos.receta_heredada(t, html))
+                                    receta=receta or _vivos.receta_heredada(t, html),
+                                    pedido=pedido, decisiones=decisiones)
             receta = t.ultima.receta
             accion = f"Publiqué la versión {t.ultima.version} de «{t.titulo}»"
         else:
             t = _tableros.crear(db, titulo, html, descripcion, modelo, tags, datos_hasta,
-                                nota="Publicado desde Claude", autor=u.nombre, receta=receta or None)
+                                nota="Publicado desde Claude", autor=u.nombre, receta=receta or None,
+                                pedido=pedido, decisiones=decisiones)
             accion = f"Publiqué el tablero «{t.titulo}»"
         db.commit()
         tipo = "vivo: se actualiza al abrirlo" if receta else "foto: los datos quedan fijos"
+        faltan = [c for c, v in (("pedido", pedido), ("decisiones", decisiones)) if not (v or "").strip()]
+        aviso = (f"\nAviso: no guardaste {' ni '.join(faltan)}; quien vea o modifique el tablero no va a saber "
+                 "cómo se armó. Podés publicar una versión nueva que los incluya." if faltan else "")
         return (f"{accion} ({tipo}).\nLink: {_url_tablero(t.slug)}\n"
-                f"Slug: {t.slug} (usalo en `actualizar` para nuevas versiones).")
+                f"Slug: {t.slug} (usalo en `actualizar` para nuevas versiones).{aviso}")
     except _tableros.TableroError as e:
         db.rollback()
         return f"Error: {e}"
@@ -535,7 +546,12 @@ def obtener_dashboard(slug: str, version: int = 0) -> str:
                     + (f", modelo {t.modelo}" if t.modelo else "") + ".")
         receta = (f"\n\nReceta (tablero vivo):\n```json\n{json.dumps(v.receta, ensure_ascii=False, indent=1)}\n```"
                   if v.receta else "")
-        return f"{cabecera}{receta}\n\n```html\n{v.html}\n```"
+        historia = "\n".join(
+            f"- v{x.version} ({x.autor or 'app'}, {x.created_at:%d/%m/%Y}): {x.nota or ''}"
+            + (f"\n  Pedido: {x.pedido}" if x.pedido else "")
+            + (f"\n  Decisiones: {x.decisiones}" if x.decisiones else "")
+            for x in t.versiones)
+        return f"{cabecera}\n\nCómo se armó (todas las versiones):\n{historia}{receta}\n\n```html\n{v.html}\n```"
     finally:
         db.close()
 

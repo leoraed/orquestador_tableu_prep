@@ -95,6 +95,8 @@ def migrar_columnas_semanticas(engine) -> None:
         ("tableros", "autor", "VARCHAR(255) NULL"),
         ("tablero_versiones", "autor", "VARCHAR(255) NULL"),
         ("tablero_versiones", "receta", "JSON NULL"),
+        ("tablero_versiones", "pedido", "TEXT NULL"),
+        ("tablero_versiones", "decisiones", "TEXT NULL"),
     ]
     with engine.connect() as conn:
         for tabla, columna, ddl in nuevas:

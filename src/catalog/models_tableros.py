@@ -51,6 +51,9 @@ class TableroVersion(BaseCatalog):
     autor: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     # Tablero vivo: consultas y filtros que el orquestador ejecuta al abrirlo (None = foto)
     receta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    # Cómo se armó: lo que pidió el usuario y las definiciones/supuestos (los resume Claude al publicar)
+    pedido: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    decisiones: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     tablero: Mapped["Tablero"] = relationship(back_populates="versiones")

@@ -270,3 +270,26 @@ def test_mcp_probar_receta(mcp):
     r = mcp.probar_receta(RECETA, {"periodo": "ultimos_3_meses"})
     assert '"periodo": "ultimos_3_meses"' in r and "### mensual: 1 filas" in r and "2026-09 | 7" in r
     assert "Error en la receta" in mcp.probar_receta({"consultas": {}})
+
+
+# ── cómo se armó ─────────────────────────────────────────────────────────────
+
+def test_mcp_guarda_pedido_y_decisiones(mcp):
+    r = mcp.publicar_dashboard("NOC vivo", HTML_VIVO, receta=RECETA,
+                               pedido="Tablero del NOC por operador, filtrable por período",
+                               decisiones="Visitas técnicas = work orders.\nSe excluyen casos sin operador.")
+    assert "Aviso" not in r
+    r = mcp.publicar_dashboard("", HTML_VIVO, actualizar="noc-vivo", nota="sumé WhatsApp")
+    assert "no guardaste pedido ni decisiones" in r
+    o = mcp.obtener_dashboard("noc-vivo")
+    assert "Cómo se armó" in o and "Pedido: Tablero del NOC por operador" in o
+    assert "Decisiones: Visitas técnicas = work orders." in o and "v2 (Ana" in o
+
+
+def test_app_guarda_pedido_y_decisiones(Session, cliente):
+    ana = cliente("analista", usuario="ana")
+    t = ana.post("/api/tableros", data={"titulo": "Ventas", "pedido": "ventas por mes", "decisiones": "sin mudanzas"},
+                 files={"file": ("v.html", io.BytesIO(b"<html>v</html>"), "text/html")}).json()["tablero"]
+    v = t["versiones"][0]
+    assert (v["pedido"], v["decisiones"]) == ("ventas por mes", "sin mudanzas")
+    assert "Cómo se armó" in ana.get(f"/tableros/{t['slug']}").text

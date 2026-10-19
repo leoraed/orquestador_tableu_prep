@@ -1730,10 +1730,11 @@ def api_listar_tableros(db: Session = Depends(get_catalog_db)):
 @app.post("/api/tableros")
 async def api_crear_tablero(request: Request, file: UploadFile = File(...), titulo: str = Form(...),
                             descripcion: str = Form(""), modelo: str = Form(""), tags: str = Form(""),
-                            datos_hasta: str = Form(""), db: Session = Depends(get_catalog_db)):
+                            datos_hasta: str = Form(""), pedido: str = Form(""), decisiones: str = Form(""),
+                            db: Session = Depends(get_catalog_db)):
     try:
         t = _tableros.crear(db, titulo, await _leer_html(file), descripcion, modelo, tags, datos_hasta,
-                            autor=_acceso_web.usuario_actual(request).nombre)
+                            autor=_acceso_web.usuario_actual(request).nombre, pedido=pedido, decisiones=decisiones)
     except _tableros.TableroError as e:
         return JSONResponse({"ok": False, "error": str(e)})
     db.commit()
@@ -1744,12 +1745,13 @@ async def api_crear_tablero(request: Request, file: UploadFile = File(...), titu
 @app.post("/api/tableros/{slug}/versiones")
 async def api_nueva_version_tablero(slug: str, request: Request, file: UploadFile = File(...),
                                     datos_hasta: str = Form(""), nota: str = Form(""),
+                                    pedido: str = Form(""), decisiones: str = Form(""),
                                     db: Session = Depends(get_catalog_db)):
     t = _tablero_propio(request, db, slug)
     try:
         html = await _leer_html(file)
         _tableros.nueva_version(db, t, html, datos_hasta, nota, autor=_acceso_web.usuario_actual(request).nombre,
-                                receta=_vivos.receta_heredada(t, html))
+                                receta=_vivos.receta_heredada(t, html), pedido=pedido, decisiones=decisiones)
     except _tableros.TableroError as e:
         return JSONResponse({"ok": False, "error": str(e)})
     db.commit()

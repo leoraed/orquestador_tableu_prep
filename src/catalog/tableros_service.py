@@ -52,13 +52,23 @@ def _tags(valor: str | None) -> str | None:
     return ", ".join(x.strip() for x in (valor or "").split(",") if x.strip()) or None
 
 
+MAX_TEXTO = 4000
+
+
+def _texto(valor: str | None) -> str | None:
+    """Pedido / decisiones: texto libre, recortado."""
+    valor = (valor or "").strip()
+    return valor[:MAX_TEXTO] if valor else None
+
+
 def buscar(db: Session, slug: str) -> Tablero | None:
     return db.query(Tablero).filter(Tablero.slug == slug).first()
 
 
 def crear(db: Session, titulo: str, html: str, descripcion: str = "", modelo: str = "",
           tags: str = "", datos_hasta: str = "", nota: str = "Primera versión",
-          autor: str | None = None, receta: dict | None = None) -> Tablero:
+          autor: str | None = None, receta: dict | None = None, pedido: str = "",
+          decisiones: str = "") -> Tablero:
     """receta: ya validada (tableros_vivos.validar_receta); con receta el tablero es «vivo»."""
     titulo = (titulo or "").strip()
     if not titulo:
@@ -71,20 +81,23 @@ def crear(db: Session, titulo: str, html: str, descripcion: str = "", modelo: st
                 tags=_tags(tags), autor=autor, tipo="vivo" if receta else "foto",
                 created_at=ahora, updated_at=ahora)
     t.versiones.append(TableroVersion(version=1, html=html, datos_hasta=fecha, autor=autor, receta=receta,
-                                      nota=(nota or "").strip()[:500] or None, created_at=ahora))
+                                      nota=(nota or "").strip()[:500] or None, created_at=ahora,
+                                      pedido=_texto(pedido), decisiones=_texto(decisiones)))
     db.add(t)
     db.flush()
     return t
 
 
 def nueva_version(db: Session, t: Tablero, html: str, datos_hasta: str = "", nota: str = "",
-                  autor: str | None = None, receta: dict | None = None) -> Tablero:
+                  autor: str | None = None, receta: dict | None = None, pedido: str = "",
+                  decisiones: str = "") -> Tablero:
     validar_html(html)
     fecha = parse_fecha(datos_hasta)
     ahora = datetime.utcnow()
     t.versiones.append(TableroVersion(version=(t.ultima.version if t.ultima else 0) + 1, html=html,
                                       datos_hasta=fecha, nota=(nota or "").strip()[:500] or None,
-                                      autor=autor, receta=receta, created_at=ahora))
+                                      autor=autor, receta=receta, created_at=ahora,
+                                      pedido=_texto(pedido), decisiones=_texto(decisiones)))
     t.tipo = "vivo" if receta else "foto"
     t.updated_at = ahora
     db.flush()
@@ -120,6 +133,7 @@ def a_dict(t: Tablero) -> dict:
         "updated_at": t.updated_at.isoformat() if t.updated_at else None,
         "versiones": [{"version": v.version, "nota": v.nota or "", "autor": v.autor,
                        "tipo": "vivo" if v.receta else "foto", "receta": v.receta,
+                       "pedido": v.pedido or "", "decisiones": v.decisiones or "",
                        "datos_hasta": v.datos_hasta.isoformat() if v.datos_hasta else None,
                        "created_at": v.created_at.isoformat() if v.created_at else None,
                        "bytes": len(v.html.encode("utf-8"))} for v in reversed(t.versiones)],

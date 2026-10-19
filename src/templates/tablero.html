@@ -25,6 +25,8 @@
     <div class="small d-flex flex-wrap gap-1 align-items-center" id="meta"></div>
   </div>
   <div class="d-flex gap-2 align-items-center flex-shrink-0">
+    <button class="btn btn-outline-secondary btn-sm text-nowrap" data-bs-toggle="offcanvas" data-bs-target="#panelHistoria">
+      <i class="bi bi-chat-left-text me-1"></i>Cómo se armó</button>
     <select id="selVersion" class="form-select form-select-sm" style="width:auto" title="Versión"></select>
     <a id="lnkAbrir" class="btn btn-outline-secondary btn-sm" target="_blank" rel="noopener" title="Abrir en pestaña nueva">
       <i class="bi bi-box-arrow-up-right"></i></a>
@@ -50,6 +52,15 @@
 <div id="avisoDatos" class="alert alert-warning small py-1 px-2 mb-2 d-none"></div>
 <iframe id="visor" class="visor" sandbox="{{ sandbox }}" title="Tablero"></iframe>
 
+<!-- Panel: cómo se armó -->
+<div class="offcanvas offcanvas-end" tabindex="-1" id="panelHistoria" style="width:460px">
+  <div class="offcanvas-header border-bottom">
+    <h6 class="offcanvas-title fw-bold"><i class="bi bi-chat-left-text me-2"></i>Cómo se armó</h6>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+  </div>
+  <div class="offcanvas-body small" id="historia"></div>
+</div>
+
 <!-- Modal nueva versión -->
 <div class="modal fade" id="modalVersion" tabindex="-1">
   <div class="modal-dialog"><div class="modal-content">
@@ -66,6 +77,10 @@
         <div class="col-7"><label class="form-label small fw-semibold mb-1">Qué cambió</label>
           <input id="vNota" class="form-control form-control-sm" placeholder="ej: datos actualizados a noviembre"></div>
       </div>
+      <label class="form-label small fw-semibold mb-1 mt-2">Qué se pidió</label>
+      <textarea id="vPedido" class="form-control form-control-sm" rows="2"></textarea>
+      <label class="form-label small fw-semibold mb-1 mt-2">Decisiones y supuestos</label>
+      <textarea id="vDecisiones" class="form-control form-control-sm" rows="2"></textarea>
       <div id="vError" class="alert alert-danger small py-1 px-2 mt-2 mb-0 d-none"></div>
     </div>
     <div class="modal-footer">
@@ -151,6 +166,34 @@ function render() {
   actualizarDescarga();
   if (receta) iniciarVivo(); else document.getElementById('barraFiltros').classList.add('d-none');
 }
+
+// ── Cómo se armó ─────────────────────────────────────────────────────────────
+function renderHistoria() {
+  const cont = document.getElementById('historia'); cont.replaceChildren();
+  const bloque = (titulo, texto, vacio) => {
+    const d = el('div', 'mt-2');
+    d.appendChild(el('div', 'fw-semibold text-muted', titulo));
+    const t = el('div', texto ? '' : 'text-muted fst-italic', texto || vacio); t.style.whiteSpace = 'pre-wrap';
+    d.appendChild(t); return d;
+  };
+  for (const x of T.versiones) {
+    const card = el('div', 'border rounded p-2 mb-2' + (x.version === version ? ' border-primary' : ''));
+    const cab = el('div', 'd-flex justify-content-between');
+    cab.append(el('span', 'fw-semibold', `Versión ${x.version}${x.version === version ? ' · en pantalla' : ''}`),
+               el('span', 'text-muted', `${fecha(x.created_at)} · ${x.autor || 'desde la app'}`));
+    card.appendChild(cab);
+    if (x.nota) card.appendChild(el('div', 'text-muted', x.nota));
+    card.appendChild(bloque('Qué se pidió', x.pedido, 'No se registró.'));
+    card.appendChild(bloque('Decisiones y supuestos', x.decisiones, 'No se registraron.'));
+    if (x.receta) {
+      const det = el('details', 'mt-2'); det.appendChild(el('summary', 'text-muted', 'Consultas y filtros (receta)'));
+      const pre = el('pre', 'bg-light border rounded p-2 mt-1 mb-0', JSON.stringify(x.receta, null, 2));
+      pre.style.fontSize = '.72rem'; pre.style.whiteSpace = 'pre-wrap'; det.appendChild(pre); card.appendChild(det);
+    }
+    cont.appendChild(card);
+  }
+}
+document.getElementById('panelHistoria').addEventListener('show.bs.offcanvas', renderHistoria);
 
 // ── Tablero vivo: filtros y datos ────────────────────────────────────────────
 // El tablero está aislado (no puede llamar a la API): el visor pide los datos y se los pasa por postMessage.
@@ -380,6 +423,8 @@ async function subirVersion() {
   const fd = new FormData();
   fd.append('file', f); fd.append('datos_hasta', document.getElementById('vFecha').value);
   fd.append('nota', document.getElementById('vNota').value);
+  fd.append('pedido', document.getElementById('vPedido').value);
+  fd.append('decisiones', document.getElementById('vDecisiones').value);
   const d = await fetch(`/api/tableros/${encodeURIComponent(T.slug)}/versiones`, { method: 'POST', body: fd }).then(r => r.json());
   if (!d.ok) { err.textContent = d.error; err.classList.remove('d-none'); return; }
   location.href = base;

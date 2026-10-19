@@ -73,6 +73,14 @@
           <label class="form-label small fw-semibold mb-1">Tags</label>
           <input id="pTags" class="form-control form-control-sm" placeholder="noc, operadores, mensual">
         </div>
+        <div class="mt-2">
+          <label class="form-label small fw-semibold mb-1">Qué se pidió</label>
+          <textarea id="pPedido" class="form-control form-control-sm" rows="2" placeholder="El pedido que dio origen al tablero"></textarea>
+        </div>
+        <div class="mt-2">
+          <label class="form-label small fw-semibold mb-1">Decisiones y supuestos</label>
+          <textarea id="pDecisiones" class="form-control form-control-sm" rows="2" placeholder="Cómo se calcula cada métrica, qué se filtró y por qué"></textarea>
+        </div>
         <div class="small text-muted mt-2">
           El tablero se muestra aislado del orquestador: puede dibujar sus gráficos pero no acceder a la app.
         </div>
@@ -179,6 +187,8 @@ async function publicar() {
   fd.append('modelo', document.getElementById('pModelo').value);
   fd.append('tags', document.getElementById('pTags').value);
   fd.append('datos_hasta', document.getElementById('pFecha').value);
+  fd.append('pedido', document.getElementById('pPedido').value);
+  fd.append('decisiones', document.getElementById('pDecisiones').value);
   const btn = document.getElementById('btnPublicar'); btn.disabled = true;
   try {
     const d = await fetch('/api/tableros', { method: 'POST', body: fd }).then(r => r.json());
