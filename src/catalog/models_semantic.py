@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Optional
 from sqlalchemy import Boolean, Integer, String, DateTime, Text, JSON, ForeignKey, text
+from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from src.catalog.db import BaseCatalog
 
@@ -27,6 +28,9 @@ class SemanticEntity(BaseCatalog):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     base_table: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Origen como consulta SQL (ej. una consulta personalizada de Tableau): FROM (base_sql) AS `base_table`
+    base_sql: Mapped[Optional[str]] = mapped_column(Text().with_variant(mysql.MEDIUMTEXT(), "mysql"), nullable=True)
+    # Cada join: {table, alias, on, type} y opcionalmente sql (JOIN (sql) AS `alias`)
     joins: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
 
     model: Mapped["SemanticModel"] = relationship(back_populates="entities")
@@ -97,6 +101,7 @@ def migrar_columnas_semanticas(engine) -> None:
         ("tablero_versiones", "receta", "JSON NULL"),
         ("tablero_versiones", "pedido", "TEXT NULL"),
         ("tablero_versiones", "decisiones", "TEXT NULL"),
+        ("semantic_entities", "base_sql", "MEDIUMTEXT NULL"),
     ]
     with engine.connect() as conn:
         for tabla, columna, ddl in nuevas:

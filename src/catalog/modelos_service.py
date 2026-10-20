@@ -25,6 +25,7 @@ def modelo_a_dict(m: SemanticModel) -> dict:
                 "name": e.name,
                 "description": e.description or "",
                 "base_table": e.base_table,
+                **({"base_sql": e.base_sql} if e.base_sql else {}),
                 "joins": e.joins or [],
                 "dimensions": [
                     {"name": d.name, "expression": d.expression,
@@ -51,6 +52,7 @@ def guardar_entidades(db: Session, modelo: SemanticModel, entities_data: list) -
             name=(e_data.get("name") or "").strip(),
             description=(e_data.get("description") or "").strip() or None,
             base_table=(e_data.get("base_table") or "").strip(),
+            base_sql=(e_data.get("base_sql") or "").strip() or None,
             joins=e_data.get("joins") or [],
         )
         db.add(entity)
@@ -174,15 +176,19 @@ def reimportar(db: Session, modelo: SemanticModel, ds, aplicar: bool) -> dict:
         (modelo.entities[0] if modelo.entities else None)
     if entity is None:
         entity = SemanticEntity(model_id=modelo.id, name=ds.caption, description=ds.description,
-                                base_table=ds.base_table or "", joins=[])
+                                base_table=ds.base_table or "", base_sql=ds.base_sql, joins=ds.joins)
         plan["entidad"].append(f"Se crea la entidad «{ds.caption}».")
         if aplicar:
             db.add(entity)
             db.flush()
     elif not entity.base_table and ds.base_table:
-        plan["entidad"].append(f"Se completa la tabla base: {ds.base_table}.")
+        plan["entidad"].append(f"Se completa la tabla base: {ds.base_table}"
+                               + (f" y {len(ds.joins)} joins." if ds.joins and not entity.joins else "."))
         if aplicar:
             entity.base_table = ds.base_table
+            entity.base_sql = ds.base_sql
+            if ds.joins and not entity.joins:
+                entity.joins = ds.joins
     else:
         plan["entidad"].append("Tabla base y joins: se conservan.")
 

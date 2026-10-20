@@ -19,6 +19,13 @@ class TwbDatasource:
     pendientes: list[dict] = field(default_factory=list)
     # Problemas del datasource completo (ej. fuente publicada sin tabla real)
     avisos: list[str] = field(default_factory=list)
+    # Origen como consulta SQL personalizada (FROM (base_sql) AS base_table)
+    base_sql: str | None = None
+    # Joins con su condición (solo fuentes con modelo de relaciones; ver twb_relaciones)
+    joins: list[dict] = field(default_factory=list)
+    # Modelo de relaciones: fuente de origen y sus tablas lógicas (cuáles son hechos)
+    grupo: str = ""
+    tablas: list[dict] = field(default_factory=list)
 
 
 # Conexión a una fuente publicada en Tableau Server: no es una tabla del DW
@@ -49,12 +56,16 @@ def _safe_name(caption: str) -> str:
     return s.strip("_") or "modelo"
 
 
-def parse_twb(content: bytes) -> list[TwbDatasource]:
+def parse_twb(content: bytes, hechos: dict[str, list[str]] | None = None) -> list[TwbDatasource]:
     """
     Parse a .twb XML file.
     Only imports fields actually used in worksheets (avoids unused and internal copies).
     Falls back to all non-copy fields if the file has no worksheets.
+
+    Las fuentes con modelo de relaciones se importan como un modelo por tabla de hechos
+    (twb_relaciones). hechos: {caption de la fuente: [tablas lógicas]} para elegirlas a mano.
     """
+    from src.catalog import twb_relaciones
     root = ET.fromstring(content)
     ds_container = root.find("datasources")
     if ds_container is None:
@@ -66,6 +77,8 @@ def parse_twb(content: bytes) -> list[TwbDatasource]:
     ds_tables: dict[str, list] = {}     # ds_name -> [table_names]
     ds_captions: dict[str, str] = {}    # ds_name -> human caption
     ds_proxy: set[str] = set()          # datasources que son fuentes publicadas
+    ds_sql: dict[str, list] = {}        # ds_name -> [(relation, sql)] consultas personalizadas
+    ds_elem: dict[str, object] = {}
 
     for ds in ds_container:
         ds_name = ds.get("name", "")
@@ -77,9 +90,14 @@ def parse_twb(content: bytes) -> list[TwbDatasource]:
         col_defs[ds_name] = {}
         col_table[ds_name] = {}
         ds_tables[ds_name] = []
+        ds_sql[ds_name] = []
+        ds_elem[ds_name] = ds
 
         conn = ds.find("connection")
         if conn is not None:
+            for rel in conn.findall('.//relation[@type="text"]'):
+                if rel.get("name") and all(n != rel.get("name") for n, _ in ds_sql[ds_name]):
+                    ds_sql[ds_name].append((rel.get("name"), twb_relaciones.desescapar_sql(rel.text or "")))
             for rel in conn.findall('.//relation[@type="table"]'):
                 t = rel.get("table", "").strip("[]")
                 if t.lower() in _TABLAS_PROXY:
@@ -109,10 +127,12 @@ def parse_twb(content: bytes) -> list[TwbDatasource]:
                 "datatype": col.get("datatype", "string"),
                 "formula": calc.get("formula", "") if calc is not None else "",
                 "fmt": col.get("default-format", ""),
+                "agg": col.get("aggregation", ""),
             }
 
     # ── Step 2: collect used fields per datasource from worksheets ───────────
     used: dict[str, set] = defaultdict(set)   # ds_name -> set of col names
+    deps: dict[str, dict] = defaultdict(dict)  # ds_name -> {col: atributos en las hojas}
     worksheets = root.find("worksheets")
     if worksheets is not None:
         for ws in worksheets:
@@ -130,14 +150,26 @@ def parse_twb(content: bytes) -> list[TwbDatasource]:
                     fn = col.get("name", "")
                     if fn:
                         used[ds_name].add(fn)
+                        deps[ds_name].setdefault(fn, dict(col.attrib))
 
     # ── Step 3: build one TwbDatasource per datasource ───────────────────────
     results = []
 
     for ds_name, caption in ds_captions.items():
+        if twb_relaciones.es_modelo_de_relaciones(ds_elem[ds_name]):
+            for d in twb_relaciones.importar(ds_elem[ds_name], col_defs[ds_name], deps[ds_name], used.get(ds_name),
+                                             set(ds_captions), (hechos or {}).get(caption)):
+                results.append(TwbDatasource(**d))
+            continue
+
         defs = col_defs[ds_name]
         ctmap = col_table[ds_name]
         tables = ds_tables[ds_name]
+        # Sin tablas físicas: la primera consulta personalizada es el origen (FROM (sql) AS `nombre`)
+        base_sql = None
+        if not tables and ds_sql[ds_name]:
+            nombre_sql, base_sql = ds_sql[ds_name][0]
+            tables = [nombre_sql]
 
         # Use worksheet-filtered set; fall back to all columns if no worksheets
         candidate_names = used.get(ds_name) or set(defs.keys())
@@ -202,6 +234,11 @@ def parse_twb(content: bytes) -> list[TwbDatasource]:
         metrics.sort(key=lambda x: x["name"])
 
         avisos = []
+        if len(ds_sql[ds_name]) > (1 if base_sql else 0):
+            avisos.append("La fuente une consultas SQL personalizadas: se importó solo la primera como origen; "
+                          "agregá las demás como joins con SQL en el editor.")
+        if base_sql and twb_relaciones.parametros_sql(base_sql):
+            avisos.append("La consulta SQL usa parámetros de Tableau: reemplazalos por un valor en el editor.")
         if ds_name in ds_proxy and not tables:
             avisos.append(
                 "Fuente publicada en Tableau Server: el .twb no indica qué tablas del DW usa. "
@@ -218,6 +255,7 @@ def parse_twb(content: bytes) -> list[TwbDatasource]:
             metrics=metrics,
             pendientes=sorted(pendientes, key=lambda x: x["name"]),
             avisos=avisos,
+            base_sql=base_sql,
         ))
 
     return results

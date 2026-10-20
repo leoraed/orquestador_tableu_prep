@@ -175,21 +175,57 @@ def resolver_periodo_relativo(texto: str, hoy: date | None = None) -> tuple[str,
     raise ConsultaError(f"Período relativo inválido: {texto!r}. Opciones: {', '.join(PERIODOS_RELATIVOS)}.")
 
 
-def _from_sql(entity) -> str:
-    """FROM + JOINs de la entidad."""
-    sql = f"FROM `{entity.base_table}`\n"
-    for j in (entity.joins or []):
+def _from_sql(entity, referencias: str | None = None) -> str:
+    """
+    FROM + JOINs de la entidad. Un origen con SQL (tabla base o join) va como subconsulta.
+
+    referencias: el SQL de los campos de la consulta. En las entidades con consultas SQL
+    (importadas de un modelo de relaciones de Tableau, con toda columna calificada por su
+    tabla) se omiten los LEFT JOIN que la consulta no usa: así una tabla que multiplica
+    filas (ej. un calendario) solo entra cuando se pide un campo suyo, como en Tableau.
+    """
+    base_sql = getattr(entity, "base_sql", None)
+    joins = _joins_necesarios(entity, referencias)
+    if base_sql and base_sql.strip():
+        sql = f"FROM {_subconsulta(base_sql)} AS `{entity.base_table}`\n"
+    else:
+        sql = f"FROM `{entity.base_table}`\n"
+    for j in joins:
         table = j.get("table", "")
         alias = j.get("alias") or table
         on = j.get("on", "")
         jtype = j.get("type", "LEFT").upper()
         if not table:
             continue
+        origen = _subconsulta(j["sql"]) if (j.get("sql") or "").strip() else f"`{table}`"
         if on:
-            sql += f"{jtype} JOIN `{table}` AS `{alias}` ON {_esc(on)}\n"
+            sql += f"{jtype} JOIN {origen} AS `{alias}` ON {_esc(on)}\n"
         else:
-            sql += f"{jtype} JOIN `{table}` AS `{alias}`\n"
+            sql += f"{jtype} JOIN {origen} AS `{alias}`\n"
     return sql
+
+
+def _joins_necesarios(entity, referencias: str | None) -> list[dict]:
+    joins = list(entity.joins or [])
+    con_sql = bool((getattr(entity, "base_sql", None) or "").strip()) or any((j.get("sql") or "").strip() for j in joins)
+    if referencias is None or not con_sql:
+        return joins
+    texto, necesarios = referencias, []
+    for j in reversed(joins):          # un join puede depender de los anteriores (su ON los usa)
+        alias = j.get("alias") or j.get("table", "")
+        if (j.get("type") or "LEFT").upper() != "LEFT" or _usa_alias(texto, alias):
+            necesarios.append(j)
+            texto += "\n" + (j.get("on") or "")
+    return list(reversed(necesarios))
+
+
+def _usa_alias(texto: str, alias: str) -> bool:
+    return f"`{alias}`." in texto or re.search(rf"(?<![\w`]){re.escape(alias)}\.", texto) is not None
+
+
+def _subconsulta(sql: str) -> str:
+    # Saltos de línea alrededor: un comentario «-- …» al final del SQL no se come el paréntesis
+    return "(\n" + _esc(sql.strip().rstrip(";").strip()) + "\n)"
 
 
 def _build_sql(entity, dim_map, met_map, dimensiones, metricas, filtros, periodo, limite):
@@ -203,7 +239,11 @@ def _build_sql(entity, dim_map, met_map, dimensiones, metricas, filtros, periodo
         selects.append(f"  {_esc(met_map[m].expression)} AS `{_esc(m)}`")
     # Solo dimensiones (sin métricas): valores distintos, ej. las opciones de un filtro
     sql = ("SELECT DISTINCT\n" if dimensiones and not metricas else "SELECT\n") + ",\n".join(selects) + "\n"
-    sql += _from_sql(entity)
+    usadas = [dim_map[d].expression for d in dimensiones] + [met_map[m].expression for m in metricas]
+    usadas += [dim_map[c].expression for c in (filtros or {}) if c in dim_map]
+    if periodo and periodo.get("campo") in dim_map:
+        usadas.append(dim_map[periodo["campo"]].expression)
+    sql += _from_sql(entity, "\n".join(usadas))
 
     # WHERE
     where = []
@@ -460,7 +500,7 @@ def validar_campos(modelo: str) -> dict[str, str | None]:
             for kind, c in campos:
                 if not es_sintaxis_tableau(c.expression):
                     pendientes.append((f"{kind}-{c.id}", c.expression,
-                                       _from_sql(entity) if entity.base_table else None))
+                                       _from_sql(entity, c.expression) if entity.base_table else None))
     finally:
         db.close()
 

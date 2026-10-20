@@ -203,6 +203,7 @@ document.getElementById('modalImportar').addEventListener('hidden.bs.modal', () 
 
 function resetImport() {
   document.getElementById('twbResult').innerHTML = '';
+  hechosElegidos = {};
   document.getElementById('btnAplicar').classList.add('d-none');
   document.getElementById('btnAnalizar').classList.remove('d-none');
 }
@@ -213,11 +214,41 @@ function lista(items, max = 12) {
   return nombres.slice(0, max).join(', ') + (items.length > max ? ` y ${items.length - max} más` : '');
 }
 
+// Fuentes con modelo de relaciones: se arma un modelo por tabla de hechos (elegibles en la vista previa)
+let hechosElegidos = {};
+
+function renderHechos(modelos, preview) {
+  const grupos = {};
+  for (const m of modelos) if (m.grupo && (m.tablas || []).length) grupos[m.grupo] = m.tablas;
+  return Object.entries(grupos).map(([grupo, tablas]) => `
+    <div class="border rounded p-2 mb-2 small bg-light">
+      <div class="fw-semibold mb-1"><i class="bi bi-diagram-3 me-1"></i>«${esc(grupo)}» usa relaciones entre ${tablas.length} tablas</div>
+      <div class="text-muted mb-2">Se arma un modelo por cada tabla de hechos, con las tablas de dimensión que cuelgan de ella.
+        Las métricas que mezclan dos hechos se arman después en el tablero, con una consulta por modelo.</div>
+      <div class="d-flex flex-wrap gap-3">
+        ${tablas.map(t => `<div class="form-check mb-0" title="${t.relaciones} relaciones · ${t.metricas_propias} métricas propias">
+          <input class="form-check-input" type="checkbox" id="hecho-${esc(grupo)}-${esc(t.nombre)}" ${t.hecho ? 'checked' : ''}
+            ${preview ? '' : 'disabled'} data-grupo="${esc(grupo)}" data-tabla="${esc(t.nombre)}" onchange="cambiarHechos(this)">
+          <label class="form-check-label" for="hecho-${esc(grupo)}-${esc(t.nombre)}">${esc(t.nombre)}${t.sugerido ? ' <span class="text-muted">· sugerida</span>' : ''}</label>
+        </div>`).join('')}
+      </div>
+    </div>`).join('');
+}
+
+function cambiarHechos(chk) {
+  const grupo = chk.dataset.grupo;
+  hechosElegidos[grupo] = [...document.querySelectorAll('input[data-grupo]')]
+    .filter(c => c.dataset.grupo === grupo && c.checked).map(c => c.dataset.tabla);
+  if (!hechosElegidos[grupo].length) { chk.checked = true; hechosElegidos[grupo] = [chk.dataset.tabla]; return; }
+  importarTwb('preview');
+}
+
 function renderModeloImport(m, preview) {
   const verbo = preview ? 'Se va a' : 'Se';
   let cuerpo;
   if (m.nuevo) {
-    cuerpo = `<div>${verbo} ${preview ? 'crear' : 'creó'} con ${m.dimensiones} dimensiones y ${m.metricas} métricas.</div>`;
+    cuerpo = `<div>${verbo} ${preview ? 'crear' : 'creó'} con ${m.dimensiones} dimensiones y ${m.metricas} métricas` +
+      (m.origen_sql ? `; el origen es una consulta SQL` : '') + (m.joins ? ` y une ${m.joins} tablas` : '') + `.</div>`;
   } else {
     const p = m.plan;
     const filas = [
@@ -249,6 +280,7 @@ async function importarTwb(modo) {
   const fd = new FormData();
   fd.append('file', fileInput.files[0]);
   fd.append('modo', modo);
+  fd.append('hechos', JSON.stringify(hechosElegidos));
   const btn = document.getElementById(modo === 'preview' ? 'btnAnalizar' : 'btnAplicar');
   btn.disabled = true;
   out.innerHTML = `<div class="small text-muted">${modo === 'preview' ? 'Analizando…' : 'Importando…'}</div>`;
@@ -257,7 +289,7 @@ async function importarTwb(modo) {
     if (!data.ok) { out.innerHTML = `<div class="alert alert-danger py-2 small mb-0">${esc(data.error)}</div>`; return; }
     const preview = data.preview;
     out.innerHTML = (preview ? '' : '<div class="alert alert-success py-2 small">Importación aplicada.</div>') +
-      data.modelos.map(m => renderModeloImport(m, preview)).join('');
+      renderHechos(data.modelos, preview) + data.modelos.map(m => renderModeloImport(m, preview)).join('');
     document.getElementById('btnAnalizar').classList.toggle('d-none', preview);
     document.getElementById('btnAplicar').classList.toggle('d-none', !preview);
     if (!preview) importado = true;

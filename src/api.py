@@ -1155,7 +1155,7 @@ def _campo_to_dict(c, kind: str) -> dict:
 
 def _entidad_to_dict(e: SemanticEntity) -> dict:
     return {"id": e.id, "name": e.name, "description": e.description or "",
-            "base_table": e.base_table, "joins": e.joins or []}
+            "base_table": e.base_table, "base_sql": e.base_sql or "", "joins": e.joins or []}
 
 
 def _campos_modelo(modelo: SemanticModel) -> list[dict]:
@@ -1382,10 +1382,13 @@ def _datos_entidad(data: dict) -> tuple[dict | None, str | None]:
         tipo = (j.get("type") or "LEFT").upper()
         if tipo not in _JOIN_TYPES:
             return None, f"Tipo de join inválido: {tipo}"
-        joins.append({"table": table, "alias": (j.get("alias") or "").strip() or table,
-                      "on": (j.get("on") or "").strip(), "type": tipo})
+        join = {"table": table, "alias": (j.get("alias") or "").strip() or table,
+                "on": (j.get("on") or "").strip(), "type": tipo}
+        if (j.get("sql") or "").strip():
+            join["sql"] = j["sql"].strip()
+        joins.append(join)
     return {"name": name, "description": (data.get("description") or "").strip() or None,
-            "base_table": base, "joins": joins}, None
+            "base_table": base, "base_sql": (data.get("base_sql") or "").strip() or None, "joins": joins}, None
 
 
 @app.post("/api/modelos/{nombre}/entidades")
@@ -1412,7 +1415,7 @@ async def api_editar_entidad(nombre: str, entity_id: int, request: Request,
     datos, error = _datos_entidad(await request.json())
     if error:
         return JSONResponse({"ok": False, "error": error})
-    if (datos["base_table"], datos["joins"]) != (entity.base_table, entity.joins or []):
+    if (datos["base_table"], datos["base_sql"], datos["joins"]) != (entity.base_table, entity.base_sql, entity.joins or []):
         crear_backup(db, modelo, f"Antes de cambiar tabla base o joins de «{entity.name}»")
     for k, v in datos.items():
         setattr(entity, k, v)
@@ -1452,18 +1455,21 @@ def api_exportar_yaml(nombre: str, db: Session = Depends(get_catalog_db)):
 
 
 @app.post("/api/modelos/importar-twb")
-async def api_importar_twb(file: UploadFile = File(...), modo: str = Form("aplicar"),
+async def api_importar_twb(file: UploadFile = File(...), modo: str = Form("aplicar"), hechos: str = Form(""),
                            db: Session = Depends(get_catalog_db)):
     """
     Importa un .twb. Los modelos nuevos se crean; los existentes se fusionan sin
     pisar campos editados a mano, tabla base ni joins (ver modelos_service.reimportar).
     modo=preview no escribe nada y devuelve qué pasaría.
+    hechos: JSON {fuente: [tablas lógicas]} — en las fuentes con modelo de relaciones,
+    qué tablas son de hechos (se arma un modelo por cada una). Vacío = las sugeridas.
     """
     from src.catalog.twb_parser import parse_twb
 
     content = await file.read()
     try:
-        datasources = parse_twb(content)
+        elegidos = json.loads(hechos) if hechos.strip() else None
+        datasources = parse_twb(content, hechos=elegidos if isinstance(elegidos, dict) else None)
     except Exception as exc:
         return JSONResponse({"ok": False, "error": str(exc)})
     aplicar = modo != "preview"
@@ -1474,7 +1480,8 @@ async def api_importar_twb(file: UploadFile = File(...), modo: str = Form("aplic
         if ds.join_tables:
             avisos.append("El workbook también usa estas tablas; definí los joins (con su condición ON) "
                           "en el editor: " + ", ".join(ds.join_tables))
-        item = {"name": ds.model_name, "avisos": avisos, "pendientes": ds.pendientes}
+        item = {"name": ds.model_name, "avisos": avisos, "pendientes": ds.pendientes,
+                "grupo": ds.grupo, "tablas": ds.tablas, "joins": len(ds.joins), "origen_sql": bool(ds.base_sql)}
         modelo = db.query(SemanticModel).filter(SemanticModel.name == ds.model_name).first()
 
         if modelo:
@@ -1488,9 +1495,9 @@ async def api_importar_twb(file: UploadFile = File(...), modo: str = Form("aplic
                                        updated_at=_dt.utcnow())
                 db.add(modelo)
                 db.flush()
-                # Sin joins: el .twb no trae las condiciones y un JOIN sin ON es un producto cartesiano
+                # Joins solo con condición (modelo de relaciones): un JOIN sin ON es un producto cartesiano
                 entity = SemanticEntity(model_id=modelo.id, name=ds.caption, description=ds.description,
-                                        base_table=ds.base_table, joins=[])
+                                        base_table=ds.base_table, base_sql=ds.base_sql, joins=ds.joins)
                 db.add(entity)
                 db.flush()
                 for dim in ds.dimensions:
