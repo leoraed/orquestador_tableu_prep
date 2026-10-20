@@ -173,6 +173,37 @@ def test_ejecutar_sustituye_filtros_y_cachea(Session):
     assert not vivos.ejecutar(receta, vals, clave_cache="t:2", consultar_fn=falla)["desde_cache"]  # errores no se cachean
 
 
+def test_filtro_granularidad(Session):
+    receta = json.loads(json.dumps(RECETA))
+    receta["filtros"].append({"id": "grano", "tipo": "granularidad", "opciones": ["mes", "semana", "dia"]})
+    receta["consultas"]["evolucion"] = {"metricas": ["cant_SR"], "dimensiones": ["Fecha:$grano"], "periodo": "$periodo"}
+    receta = vivos.validar_receta(Session(), receta)
+    g = next(f for f in receta["filtros"] if f["id"] == "grano")
+    assert g["default"] == "mes" and g["etiqueta"] == "Ver por"
+
+    llamadas = []
+    fake = lambda **kw: llamadas.append(kw) or {"columnas": kw["dimensiones"] + kw["metricas"], "filas": []}
+    vals = vivos.valores_efectivos(receta, {"grano": "semana"})
+    vivos.ejecutar(receta, vals, consultar_fn=fake)
+    assert ["Fecha:semana"] in [c["dimensiones"] for c in llamadas]
+    msg = vivos.mensaje_datos(vivos.ejecutar(receta, vals, consultar_fn=fake), vals, receta)
+    assert msg["filtros"]["grano"] == {"valor": "semana", "etiqueta": "Ver por", "texto": "Semana"}
+    assert vivos.valores_efectivos(receta, {"grano": "anio"})["grano"] == "mes"      # fuera de las opciones → default
+
+    for mal, error in [
+        ({"id": "g", "tipo": "granularidad", "opciones": ["mes", "quincena"]}, "opciones"),
+        ({"id": "g", "tipo": "granularidad", "opciones": ["mes"], "default": "dia"}, "default"),
+    ]:
+        with pytest.raises(TableroError, match=error):
+            vivos.validar_receta(Session(), {**RECETA, "filtros": RECETA["filtros"] + [mal]})
+    with pytest.raises(TableroError, match="granularidad declarado"):
+        vivos.validar_receta(Session(), {**RECETA, "consultas": {"x": {"metricas": ["cant_SR"],
+                                                                     "dimensiones": ["Fecha:$operador"]}}})
+    with pytest.raises(TableroError, match="solo aplica a fechas"):
+        vivos.validar_receta(Session(), {**RECETA, "filtros": RECETA["filtros"] + [{"id": "g", "tipo": "granularidad"}],
+                                         "consultas": {"x": {"metricas": ["cant_SR"], "dimensiones": ["Operador:$g"]}}})
+
+
 def test_inyectar_sdk():
     html = vivos.inyectar_sdk("<html><head><title>x</title></head><body></body></html>", {"datos": {"a": 1}})
     assert html.index("window.__ORQ_DATOS__") < html.index("window.Tablero") < html.index("<title>")

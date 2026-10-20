@@ -9,16 +9,20 @@ Receta:
         {"id": "periodo", "tipo": "periodo", "etiqueta": "Período", "campo": "Fecha",
          "default": "ultimos_12_meses"},
         {"id": "operador", "tipo": "dimension", "etiqueta": "Operador",
-         "dimension": "Nombre Completo", "multiple": true, "default": []}
+         "dimension": "Nombre Completo", "multiple": true, "default": []},
+        {"id": "grano", "tipo": "granularidad", "etiqueta": "Ver por",
+         "opciones": ["mes", "semana", "dia"], "default": "mes"}
       ],
       "consultas": {
-        "mensual": {"metricas": ["cant_SR"], "dimensiones": ["Fecha:mes"],
-                    "filtros": {"Nombre Completo": "$operador"}, "periodo": "$periodo"},
+        "evolucion": {"metricas": ["cant_SR"], "dimensiones": ["Fecha:$grano"],
+                      "filtros": {"Nombre Completo": "$operador"}, "periodo": "$periodo"},
         "ranking": {"metricas": ["cant_SR"], "dimensiones": ["Nombre Completo"], "periodo": "$periodo"}
       }
     }
 
 En una consulta, "$id" toma el valor actual del filtro declarado con ese id.
+Un filtro de granularidad se usa en una dimensión de fecha ("Fecha:$grano"): la
+columna resultante se llama con el grano elegido ("Fecha:semana").
 
 Como el tablero se muestra aislado (sin acceso a la API), el visor del
 orquestador ejecuta la receta y le pasa los datos por postMessage; la plantilla
@@ -43,6 +47,7 @@ MAX_VALORES_FILTRO = 100
 MAX_OPCIONES = 500
 _ID_RE = re.compile(r"^[a-z][a-z0-9_]{0,40}$")
 _MES_RE = re.compile(r"^\d{4}-\d{2}(-\d{2})?$")
+NOMBRES_GRANO = {"dia": "Día", "semana": "Semana", "mes": "Mes", "trimestre": "Trimestre", "anio": "Año"}
 
 
 # ── validación ───────────────────────────────────────────────────────────────
@@ -107,6 +112,17 @@ def _validar(db: Session, receta) -> dict:
             raise TableroError(f"Filtro con id inválido: {fid!r} (minúsculas, números y _).")
         if fid in por_id:
             raise TableroError(f"Filtro repetido: {fid}.")
+        if f.get("tipo") == "granularidad":
+            f.setdefault("etiqueta", "Ver por")
+            opciones = f.get("opciones") or ["mes", "semana", "dia"]
+            if not isinstance(opciones, list) or any(o not in GRANOS for o in opciones):
+                raise TableroError(f"Filtro «{fid}»: «opciones» tiene que ser una lista de {', '.join(GRANOS)}.")
+            f["opciones"] = list(dict.fromkeys(opciones))
+            f.setdefault("default", f["opciones"][0])
+            if f["default"] not in f["opciones"]:
+                raise TableroError(f"Filtro «{fid}»: el default «{f['default']}» no está entre las opciones.")
+            por_id[fid] = f
+            continue
         modelo = f.get("modelo") or modelo_def
         if not modelo:
             raise TableroError(f"Filtro «{fid}»: falta el modelo (en el filtro o en la receta).")
@@ -124,7 +140,7 @@ def _validar(db: Session, receta) -> dict:
             f["multiple"] = bool(f.get("multiple", True))
             f.setdefault("default", [] if f["multiple"] else None)
         else:
-            raise TableroError(f"Filtro «{fid}»: tipo inválido {f.get('tipo')!r} (periodo o dimension).")
+            raise TableroError(f"Filtro «{fid}»: tipo inválido {f.get('tipo')!r} (periodo, dimension o granularidad).")
         por_id[fid] = f
     r["filtros"] = filtros
 
@@ -151,7 +167,13 @@ def _validar(db: Session, receta) -> dict:
             base, _, grano = d.partition(":")
             if base not in dims:
                 raise TableroError(f"{donde}: la dimensión «{base}» no existe en «{modelo}».")
-            if grano and (grano not in GRANOS or dims[base] not in ("date", "datetime")):
+            if _es_ref(grano):
+                ref = por_id.get(grano[1:])
+                if not ref or ref["tipo"] != "granularidad":
+                    raise TableroError(f"{donde}: «{grano}» no es un filtro de granularidad declarado.")
+                if dims[base] not in ("date", "datetime"):
+                    raise TableroError(f"{donde}: «{d}» — la granularidad solo aplica a fechas.")
+            elif grano and (grano not in GRANOS or dims[base] not in ("date", "datetime")):
                 raise TableroError(f"{donde}: «{d}» — la granularidad solo aplica a fechas ({', '.join(GRANOS)}).")
         cf = c.get("filtros") or {}
         if not isinstance(cf, dict):
@@ -196,6 +218,8 @@ def valores_efectivos(receta: dict, pedidos: dict | None) -> dict:
                 _validar_periodo_literal(v, f["etiqueta"])
             except (TableroError, ConsultaError):
                 v = f.get("default")
+        elif f["tipo"] == "granularidad":
+            v = v if v in f["opciones"] else f["default"]
         else:
             if f["multiple"]:
                 v = [str(x) for x in (v if isinstance(v, list) else ([] if v in (None, "") else [v]))]
@@ -231,6 +255,12 @@ def describir_periodo(valor) -> str:
 
 # ── ejecución ────────────────────────────────────────────────────────────────
 
+def _resolver_grano(dimension: str, valores: dict) -> str:
+    """'Fecha:$grano' → 'Fecha:semana' según el valor del filtro."""
+    base, _, grano = dimension.partition(":")
+    return f"{base}:{valores.get(grano[1:])}" if _es_ref(grano) else dimension
+
+
 _CACHE: dict[str, tuple[float, dict]] = {}
 CACHE_SEGUNDOS = 10 * 60
 _CACHE_MAX = 300
@@ -259,7 +289,8 @@ def ejecutar(receta: dict, valores: dict, clave_cache: str | None = None, refres
         per = c.get("periodo")
         campo = por_id[per[1:]]["campo"] if _es_ref(per) else c.get("campo_periodo")
         try:
-            r = consultar_fn(modelo=c["modelo"], metricas=c["metricas"], dimensiones=c["dimensiones"],
+            dims = [_resolver_grano(d, valores) for d in c["dimensiones"]]
+            r = consultar_fn(modelo=c["modelo"], metricas=c["metricas"], dimensiones=dims,
                              filtros=filtros, periodo=_periodo_para(per, campo, valores), limite=c["limite"])
             datos[nombre] = {"columnas": r["columnas"], "filas": r["filas"], "error": None}
         except ConsultaError as e:
@@ -341,8 +372,12 @@ def mensaje_datos(resultado: dict, valores: dict, receta: dict) -> dict:
     filtros = {}
     for f in receta.get("filtros") or []:
         v = valores.get(f["id"])
-        filtros[f["id"]] = {"valor": v, "etiqueta": f["etiqueta"],
-                            "texto": describir_periodo(v) if f["tipo"] == "periodo"
-                            else (", ".join(v) if isinstance(v, list) else (v or "")) or "Todos"}
+        if f["tipo"] == "periodo":
+            texto = describir_periodo(v)
+        elif f["tipo"] == "granularidad":
+            texto = NOMBRES_GRANO.get(v, v)
+        else:
+            texto = (", ".join(v) if isinstance(v, list) else (v or "")) or "Todos"
+        filtros[f["id"]] = {"valor": v, "etiqueta": f["etiqueta"], "texto": texto}
     return {"tipo": "orquestador:datos", "datos": resultado["datos"], "filtros": filtros,
             "consultado": resultado["consultado"], "hoy": date.today().isoformat()}

@@ -262,7 +262,9 @@ function el(tag, cls, texto) { const e = document.createElement(tag); if (cls) e
 function dibujarBarra() {
   const barra = document.getElementById('barraFiltros'); barra.replaceChildren();
   barra.classList.remove('d-none');
-  for (const f of receta.filtros || []) barra.appendChild(f.tipo === 'periodo' ? filtroPeriodo(f) : filtroDimension(f));
+  for (const f of receta.filtros || []) {
+    barra.appendChild(f.tipo === 'periodo' ? filtroPeriodo(f) : f.tipo === 'granularidad' ? filtroGranularidad(f) : filtroDimension(f));
+  }
   const der = el('div', 'ms-auto d-flex align-items-center gap-2 small text-muted');
   const estado = el('span', '', ''); estado.id = 'estadoDatos';
   const refrescar = el('button', 'btn btn-link btn-sm p-0', 'Actualizar');
@@ -303,6 +305,25 @@ function filtroPeriodo(f) {
     if (!rango) cambiar(f.id, sel.value);
   };
   fila.append(sel, desde, hasta); w.appendChild(fila);
+  return w;
+}
+
+const NOMBRES_GRANO = { dia: 'Día', semana: 'Semana', mes: 'Mes', trimestre: 'Trimestre', anio: 'Año' };
+function filtroGranularidad(f) {
+  const w = el('div', ''); w.appendChild(el('label', 'form-label d-block', f.etiqueta));
+  const grupo = el('div', 'btn-group btn-group-sm'); grupo.setAttribute('role', 'group');
+  for (const g of f.opciones) {
+    const b = el('button', 'btn ' + (valores[f.id] === g ? 'btn-primary' : 'btn-outline-secondary'), NOMBRES_GRANO[g] || g);
+    b.type = 'button'; b.setAttribute('aria-pressed', valores[f.id] === g);
+    b.onclick = () => {
+      if (valores[f.id] === g) return;
+      grupo.querySelectorAll('button').forEach(x => { x.className = 'btn btn-outline-secondary'; x.setAttribute('aria-pressed', false); });
+      b.className = 'btn btn-primary'; b.setAttribute('aria-pressed', true);
+      cambiar(f.id, g);
+    };
+    grupo.appendChild(b);
+  }
+  w.appendChild(grupo);
   return w;
 }
 
